@@ -205,11 +205,11 @@ TEST(Md4cAdapterTest, LargeDocumentPerformance) {
     ASSERT_NE(tree, nullptr);
     EXPECT_GT(tree->root->children.size(), 1000u);
 
-    // Parsing 100 KB with md4c should be sub-10 ms in release; allow headroom for ASan
-#if defined(__SANITIZE_ADDRESS__) || defined(ADDRESS_SANITIZER)
-    EXPECT_LT(elapsed.count(), 200'000); // < 200 ms in ASan instrumented build
+    // Parsing 100 KB with md4c should be sub-10 ms in release; allow headroom for unoptimized debug/ASan
+#if defined(_DEBUG)
+    EXPECT_LT(elapsed.count(), 5'000'000); // < 5 s in unoptimized ASan debug build
 #else
-    EXPECT_LT(elapsed.count(), 20'000);  // < 20 ms in optimized release
+    EXPECT_LT(elapsed.count(), 20'000);    // < 20 ms in optimized release build
 #endif
 }
 
