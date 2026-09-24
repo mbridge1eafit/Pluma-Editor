@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag de versión (ej. v0.1.0)'
+        required: false
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSVC developer prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure Release Preset
+        run: cmake --preset release
+
+      - name: Build Release Preset
+        run: cmake --build --preset release
+
+      - name: Run Tests (Release)
+        run: ctest --preset release --output-on-failure
+
+      - name: Determine Version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v[0-9]') {
+            $tag = "${{ github.event.inputs.tag_name }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $tag = "v0.1.0"
+          }
+          Write-Host "Releasing version: $tag"
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Package Release Artifacts
+        shell: pwsh
+        run: |
+          .\scripts\package_release.ps1 -Version "${{ steps.version.outputs.tag }}"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Pluma ${{ steps.version.outputs.tag }}
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
