@@ -63,6 +63,7 @@ set(PLUMA_SOURCES
     src/platform/theme.cpp
     res/pluma.rc
     res/resource.h
+    res/pluma.manifest
 )
 
 add_executable(pluma WIN32 ${PLUMA_SOURCES})
