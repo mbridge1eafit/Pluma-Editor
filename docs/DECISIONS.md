@@ -46,3 +46,16 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
 - **Contexto:** F-03 exige round-trip byte a byte sin alterar codificación (UTF-8 con/sin BOM, UTF-16 LE/BE) ni saltos de línea (CRLF, LF). NF-08 exige guardado atómico para prevenir pérdidas de datos ante cortes imprevistos.
 - **Decisión:** `DocumentIO` analiza los primeros bytes para BOM (3 bytes para UTF-8 BOM, 2 bytes para UTF-16 LE/BE) y preserva el formato original al guardar. Si el archivo no tiene BOM, se trata como UTF-8 directo. Para archivos mayores a 1 MB se usa `CreateFileMappingW` + `MapViewOfFile`. El guardado atómico escribe primero a un archivo temporal (`.tmp_<timestamp>_<pid>`) en el mismo directorio, descarga búferes a disco (`FlushFileBuffers`), y ejecuta `ReplaceFileW` (con fallback a `MoveFileExW` con `MOVEFILE_REPLACE_EXISTING`).
 - **Alternativas descartadas:** Sobrescritura directa de archivos in-place (riesgo de corrupción de datos si el proceso o el sistema se interrumpe a mitad de escritura).
+
+---
+
+## [2026-09-24] Decisión 006: Pipeline asíncrono de parseo Markdown y AST BlockTree (M2, F-08, F-14)
+
+- **Contexto:** El requerimiento F-08 exige parseo en hilo secundario con un debounce de 50 ms sin bloquear el hilo de la interfaz de usuario, descartando automáticamente versiones obsoletas. El requerimiento F-14 exige correspondencia entre bloques y líneas fuente del documento para el scroll sincronizado.
+- **Decisión:**
+  - El AST `BlockTree` representa los bloques jerárquicos (encabezados H1-H6, párrafos, citas, listas ordenadas/desordenadas, listas de tareas GFM `[x]`/`[ ]`, bloques de código con lenguaje, separadores temáticos, tablas completas con cabecera y alineación de columnas) y spans en línea (texto, énfasis, negrita, código, enlaces, imágenes, tachado y saltos de línea) almacenando rangos de líneas fuente (`startLine`..`endLine`).
+  - `Md4cAdapter` implementa callbacks SAX de md4c enlazados a la especificación CommonMark 0.31 + extensiones GFM. La conversión de offsets de caracteres a números de línea se implementa con un avance secuencial monotónico amortizado $O(1)$ (`cachedLineIndex`), garantizando un tiempo de parseo total $O(N)$ en documentos grandes sin overhead de iteradores de depuración.
+  - `ParseWorker` encapsula un hilo en segundo plano (`std::jthread`) sincronizado con `SRWLOCK` y `CONDITION_VARIABLE` (`SleepConditionVariableSRW`). El debounce se computa de forma reactiva; si se encolan nuevas pulsaciones durante el debounce o el parseo, las versiones obsoletas se liberan inmediatamente sin enviar mensajes. Cuando la versión es actual, se transfiere la propiedad del árbol al hilo de UI mediante `PostMessageW(m_targetHwnd, WM_USER_PARSE_COMPLETE, version, reinterpret_cast<LPARAM>(tree.release()))`.
+- **Alternativas descartadas:**
+  - *Parseo síncrono en el hilo de UI:* Descartado porque bloquearía la interfaz y aumentaría la latencia de tecleo a pixel en documentos medianos y grandes (> 100 KB), violando NF-05 y F-08.
+  - *Generación de HTML intermedio o DOM web:* Descartado conforme al PRD; el AST en C++ alimenta directamente el motor de layout DirectWrite en M3 sin intermediarios web.

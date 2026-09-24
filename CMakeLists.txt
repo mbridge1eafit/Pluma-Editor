@@ -55,6 +55,12 @@ set(PLUMA_SOURCES
     src/io/document_io.cpp
     src/editor/editor_view.h
     src/editor/editor_view.cpp
+    src/markdown/block_tree.h
+    src/markdown/block_tree.cpp
+    src/markdown/md4c_adapter.h
+    src/markdown/md4c_adapter.cpp
+    src/markdown/parse_worker.h
+    src/markdown/parse_worker.cpp
     res/pluma.rc
     res/resource.h
     res/pluma.manifest
