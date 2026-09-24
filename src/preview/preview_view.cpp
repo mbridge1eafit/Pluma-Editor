@@ -1,17 +1,64 @@
 #include "preview_view.h"
 #include <shellapi.h>
 #include <uxtheme.h>
+#include <windowsx.h>
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cctype>
+#include <cwctype>
+
+#include "../markdown/slug.h"
 
 namespace Pluma::Preview {
 
-PreviewView::PreviewView() {
-    m_colors = PreviewThemeColors::Light();
+namespace {
+
+constexpr float kLineScrollDip = 40.0f;       // Arrow keys / scrollbar arrows
+constexpr float kWheelLineDip = 24.0f;        // One wheel "line"
+
+std::wstring Utf8ToUtf16(std::string_view utf8) {
+    if (utf8.empty()) return {};
+    const int count = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+    if (count <= 0) return {};
+    std::wstring result(static_cast<size_t>(count), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), result.data(), count);
+    return result;
 }
+
+bool StartsWithIgnoreCase(std::string_view text, std::string_view prefix) {
+    if (text.size() < prefix.size()) return false;
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(text[i])) != prefix[i]) return false;
+    }
+    return true;
+}
+
+std::wstring LowerExtension(const std::filesystem::path& path) {
+    std::wstring ext = path.extension().wstring();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+    return ext;
+}
+
+bool IsMarkdownExtension(const std::wstring& ext) {
+    return ext == L".md" || ext == L".markdown" || ext == L".mdown" || ext == L".mkd" || ext == L".txt";
+}
+
+// Local files that are safe to hand to their default viewer (never executables or scripts).
+bool IsSafeToOpenExtension(const std::wstring& ext) {
+    static constexpr std::array<const wchar_t*, 14> kSafe = {
+        L".png", L".jpg", L".jpeg", L".gif", L".bmp", L".webp", L".svg", L".ico",
+        L".pdf", L".html", L".htm", L".csv", L".json", L".xml"};
+    return std::any_of(kSafe.begin(), kSafe.end(), [&ext](const wchar_t* e) { return ext == e; });
+}
+
+} // namespace
+
+PreviewView::PreviewView() = default;
 
 PreviewView::~PreviewView() {
     DiscardDirect2DResources();
-    if (m_hwnd) {
+    if (m_hwnd && IsWindow(m_hwnd)) {
         DestroyWindow(m_hwnd);
     }
 }
@@ -22,50 +69,48 @@ bool PreviewView::Create(HWND hParent, HINSTANCE hInstance, int x, int y, int wi
 
     WNDCLASSEXW wcex{};
     wcex.cbSize = sizeof(WNDCLASSEXW);
-    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.style = CS_DBLCLKS;
     wcex.lpfnWndProc = StaticWndProc;
     wcex.hInstance = m_hInstance;
     wcex.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wcex.lpszClassName = kPreviewViewClassName;
-
     RegisterClassExW(&wcex);
-
-    m_hwnd = CreateWindowExW(
-        0,
-        kPreviewViewClassName,
-        L"",
-        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN,
-        x, y, width, height,
-        m_hParent, nullptr, m_hInstance, this
-    );
-
-    if (!m_hwnd) {
-        return false;
-    }
-
-    SetWindowTheme(m_hwnd, m_isDarkMode ? L"DarkMode_Explorer" : L"", nullptr);
 
     HRESULT hr = D2D1CreateFactory(
         D2D1_FACTORY_TYPE_SINGLE_THREADED,
         __uuidof(ID2D1Factory),
-        reinterpret_cast<void**>(m_d2dFactory.GetAddressOf())
-    );
+        reinterpret_cast<void**>(m_d2dFactory.GetAddressOf()));
     if (FAILED(hr)) return false;
 
     hr = DWriteCreateFactory(
         DWRITE_FACTORY_TYPE_SHARED,
         __uuidof(IDWriteFactory),
-        reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf())
-    );
+        reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
     if (FAILED(hr)) return false;
 
-    m_layout.Initialize(m_dwriteFactory.Get());
+    if (!m_layout.Initialize(m_dwriteFactory.Get())) return false;
 
     m_hHandCursor = LoadCursorW(nullptr, IDC_HAND);
     m_hArrowCursor = LoadCursorW(nullptr, IDC_ARROW);
 
-    m_pageHeight = height;
+    m_hwnd = CreateWindowExW(
+        0,
+        kPreviewViewClassName,
+        L"",
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN | WS_TABSTOP,
+        x, y, width, height,
+        m_hParent, nullptr, m_hInstance, this);
+    if (!m_hwnd) {
+        return false;
+    }
 
+    m_dpi = GetDpiForWindow(m_hwnd);
+    if (m_dpi == 0) m_dpi = 96;
+    SetWindowTheme(m_hwnd, m_isDarkMode ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+
+    RECT rc{};
+    GetClientRect(m_hwnd, &rc);
+    OnResize(rc.right - rc.left, rc.bottom - rc.top);
     return true;
 }
 
@@ -97,28 +142,26 @@ LRESULT PreviewView::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_ERASEBKGND:
         return 1; // Prevent flicker; Direct2D clears background
 
-    case WM_SIZE: {
-        int width = LOWORD(lParam);
-        int height = HIWORD(lParam);
-        OnResize(width, height);
+    case WM_SIZE:
+        OnResize(LOWORD(lParam), HIWORD(lParam));
         return 0;
-    }
 
     case WM_VSCROLL: {
-        int action = LOWORD(wParam);
-        int newPos = m_scrollPos;
-        switch (action) {
-        case SB_LINEUP:        newPos -= 24; break;
-        case SB_LINEDOWN:      newPos += 24; break;
-        case SB_PAGEUP:        newPos -= m_pageHeight; break;
-        case SB_PAGEDOWN:      newPos += m_pageHeight; break;
+        float newPos = m_scrollPos;
+        switch (LOWORD(wParam)) {
+        case SB_LINEUP:        newPos -= kLineScrollDip; break;
+        case SB_LINEDOWN:      newPos += kLineScrollDip; break;
+        case SB_PAGEUP:        newPos -= m_viewHeight * 0.9f; break;
+        case SB_PAGEDOWN:      newPos += m_viewHeight * 0.9f; break;
+        case SB_TOP:           newPos = 0.0f; break;
+        case SB_BOTTOM:        newPos = m_maxScroll; break;
         case SB_THUMBTRACK:
         case SB_THUMBPOSITION: {
             SCROLLINFO si{};
             si.cbSize = sizeof(si);
             si.fMask = SIF_TRACKPOS;
             GetScrollInfo(m_hwnd, SB_VERT, &si);
-            newPos = si.nTrackPos;
+            newPos = static_cast<float>(si.nTrackPos);
             break;
         }
         default: break;
@@ -128,50 +171,67 @@ LRESULT PreviewView::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_MOUSEWHEEL: {
-        short delta = GET_WHEEL_DELTA_WPARAM(wParam);
-        int lines = 3;
+        // Keep sub-notch precision so high-resolution touchpads scroll smoothly.
+        const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
         UINT scrollLines = 3;
         SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &scrollLines, 0);
-        if (scrollLines > 0) lines = static_cast<int>(scrollLines);
-
-        int scrollAmount = (delta / WHEEL_DELTA) * lines * 20;
-        ScrollTo(m_scrollPos - scrollAmount);
-        return 0;
-    }
-
-    case WM_MOUSEMOVE: {
-        float x = static_cast<float>(LOWORD(lParam));
-        float y = static_cast<float>(HIWORD(lParam));
-        float contentY = y + static_cast<float>(m_scrollPos);
-
-        std::string link = m_layout.HitTestLink(x, contentY);
-        if (link != m_hoverUrl) {
-            m_hoverUrl = std::move(link);
-            SetCursor(m_hoverUrl.empty() ? m_hArrowCursor : m_hHandCursor);
+        float amount = 0.0f;
+        if (scrollLines == WHEEL_PAGESCROLL) {
+            amount = m_viewHeight * static_cast<float>(delta) / WHEEL_DELTA;
+        } else {
+            amount = kWheelLineDip * static_cast<float>(scrollLines) * static_cast<float>(delta) / WHEEL_DELTA;
         }
+        ScrollTo(m_scrollPos - amount);
         return 0;
     }
 
-    case WM_SETCURSOR: {
-        if (!m_hoverUrl.empty()) {
-            SetCursor(m_hHandCursor);
-            return TRUE;
+    case WM_KEYDOWN: {
+        switch (wParam) {
+        case VK_UP:    ScrollTo(m_scrollPos - kLineScrollDip); return 0;
+        case VK_DOWN:  ScrollTo(m_scrollPos + kLineScrollDip); return 0;
+        case VK_PRIOR: ScrollTo(m_scrollPos - m_viewHeight * 0.9f); return 0;
+        case VK_NEXT:
+        case VK_SPACE: ScrollTo(m_scrollPos + m_viewHeight * 0.9f); return 0;
+        case VK_HOME:  ScrollTo(0.0f); return 0;
+        case VK_END:   ScrollTo(m_maxScroll); return 0;
+        default: break;
         }
         break;
     }
 
+    case WM_MOUSEMOVE: {
+        if (!m_trackingMouse) {
+            TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, m_hwnd, 0};
+            m_trackingMouse = TrackMouseEvent(&tme) != FALSE;
+        }
+        UpdateHover(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
+                    PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))));
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        m_trackingMouse = false;
+        SetHoverLink(nullptr);
+        return 0;
+
+    case WM_SETCURSOR:
+        if (LOWORD(lParam) == HTCLIENT) {
+            SetCursor(m_hoverLink ? m_hHandCursor : m_hArrowCursor);
+            return TRUE;
+        }
+        break;
+
+    case WM_LBUTTONDOWN:
+        SetFocus(m_hwnd);
+        m_pressedUrl = m_hoverUrl;
+        return 0;
+
     case WM_LBUTTONUP: {
-        if (!m_hoverUrl.empty()) {
-            if (m_hoverUrl[0] == '#') {
-                ScrollToAnchor(m_hoverUrl);
-            } else {
-                int count = MultiByteToWideChar(CP_UTF8, 0, m_hoverUrl.c_str(), -1, nullptr, 0);
-                if (count > 0) {
-                    std::wstring wideUrl(count, L'\0');
-                    MultiByteToWideChar(CP_UTF8, 0, m_hoverUrl.c_str(), -1, wideUrl.data(), count);
-                    ShellExecuteW(nullptr, L"open", wideUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                }
-            }
+        // Only follow a link when press and release happen on the same link.
+        std::string url;
+        url.swap(m_pressedUrl);
+        if (!url.empty() && url == m_hoverUrl) {
+            OpenLink(url);
             return 0;
         }
         break;
@@ -191,44 +251,31 @@ bool PreviewView::EnsureDirect2DResources() {
 
     RECT rc{};
     GetClientRect(m_hwnd, &rc);
-    D2D1_SIZE_U size = D2D1::SizeU(
+    const D2D1_SIZE_U size = D2D1::SizeU(
         (std::max)(1u, static_cast<UINT32>(rc.right - rc.left)),
         (std::max)(1u, static_cast<UINT32>(rc.bottom - rc.top)));
 
-    D2D1_RENDER_TARGET_PROPERTIES rtProps = D2D1::RenderTargetProperties();
-    D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps = D2D1::HwndRenderTargetProperties(m_hwnd, size);
+    // Explicit DPI: layout works in DIPs and Direct2D scales to physical pixels (Per-Monitor v2).
+    const float dpi = static_cast<float>(m_dpi);
+    const D2D1_RENDER_TARGET_PROPERTIES rtProps = D2D1::RenderTargetProperties(
+        D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(), dpi, dpi);
+    const D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps = D2D1::HwndRenderTargetProperties(m_hwnd, size);
 
-    HRESULT hr = m_d2dFactory->CreateHwndRenderTarget(rtProps, hwndProps, &m_renderTarget);
-    if (FAILED(hr)) return false;
-
-    m_renderTarget->CreateSolidColorBrush(m_colors.text, &m_brushText);
-    m_renderTarget->CreateSolidColorBrush(m_colors.headingText, &m_brushHeading);
-    m_renderTarget->CreateSolidColorBrush(m_colors.linkText, &m_brushLink);
-    m_renderTarget->CreateSolidColorBrush(m_colors.codeText, &m_brushCodeText);
-    m_renderTarget->CreateSolidColorBrush(m_colors.codeBackground, &m_brushCodeBg);
-    m_renderTarget->CreateSolidColorBrush(m_colors.codeBorder, &m_brushCodeBorder);
-    m_renderTarget->CreateSolidColorBrush(m_colors.inlineCodeBg, &m_brushInlineCodeBg);
-    m_renderTarget->CreateSolidColorBrush(m_colors.blockquoteBorder, &m_brushBlockquoteBorder);
-    m_renderTarget->CreateSolidColorBrush(m_colors.ruleLine, &m_brushRuleLine);
-    m_renderTarget->CreateSolidColorBrush(m_colors.tableBorder, &m_brushTableBorder);
-    m_renderTarget->CreateSolidColorBrush(m_colors.tableHeaderBg, &m_brushTableHeaderBg);
-
+    if (FAILED(m_d2dFactory->CreateHwndRenderTarget(rtProps, hwndProps, &m_renderTarget))) {
+        return false;
+    }
+    if (!m_renderer.CreateResources(m_renderTarget.Get(), m_colors)) {
+        m_renderTarget.Reset();
+        return false;
+    }
+    m_effectsApplied = false;
     return true;
 }
 
 void PreviewView::DiscardDirect2DResources() {
-    m_brushText.Reset();
-    m_brushHeading.Reset();
-    m_brushLink.Reset();
-    m_brushCodeText.Reset();
-    m_brushCodeBg.Reset();
-    m_brushCodeBorder.Reset();
-    m_brushInlineCodeBg.Reset();
-    m_brushBlockquoteBorder.Reset();
-    m_brushRuleLine.Reset();
-    m_brushTableBorder.Reset();
-    m_brushTableHeaderBg.Reset();
+    m_renderer.DiscardResources();
     m_renderTarget.Reset();
+    m_effectsApplied = false;
 }
 
 void PreviewView::Render() {
@@ -236,228 +283,76 @@ void PreviewView::Render() {
     BeginPaint(m_hwnd, &ps);
 
     if (EnsureDirect2DResources()) {
-        m_renderTarget->BeginDraw();
-        m_renderTarget->Clear(m_colors.background);
-
-        // Apply scroll translation transform
-        m_renderTarget->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, -static_cast<float>(m_scrollPos)));
-
-        float viewTop = static_cast<float>(m_scrollPos);
-        float viewBottom = viewTop + static_cast<float>(m_pageHeight);
-
-        for (const auto& block : m_layout.GetBlocks()) {
-            // Viewport culling
-            if (block.bounds.bottom < viewTop || block.bounds.top > viewBottom) {
-                continue;
-            }
-
-            switch (block.type) {
-            case Markdown::BlockType::Heading: {
-                if (block.textLayout) {
-                    m_renderTarget->DrawTextLayout(
-                        D2D1::Point2F(block.bounds.left, block.bounds.top),
-                        block.textLayout.Get(),
-                        m_brushHeading.Get()
-                    );
-                }
-                // Bottom rule for H1 and H2
-                if (block.level <= 2) {
-                    m_renderTarget->DrawLine(
-                        D2D1::Point2F(block.bounds.left, block.bounds.bottom - 4.0f),
-                        D2D1::Point2F(block.bounds.right, block.bounds.bottom - 4.0f),
-                        m_brushRuleLine.Get(),
-                        1.0f
-                    );
-                }
-                break;
-            }
-
-            case Markdown::BlockType::Paragraph: {
-                // Draw inline code pills
-                for (const auto& pill : block.inlineCodePills) {
-                    m_renderTarget->FillRoundedRectangle(
-                        D2D1::RoundedRect(pill, 3.0f, 3.0f),
-                        m_brushInlineCodeBg.Get()
-                    );
-                }
-                if (block.textLayout) {
-                    m_renderTarget->DrawTextLayout(
-                        D2D1::Point2F(block.bounds.left, block.bounds.top),
-                        block.textLayout.Get(),
-                        m_brushText.Get()
-                    );
-                }
-                break;
-            }
-
-            case Markdown::BlockType::Blockquote: {
-                // If it's the vertical bar block
-                if (block.bounds.right - block.bounds.left <= 8.0f) {
-                    m_renderTarget->FillRectangle(block.bounds, m_brushBlockquoteBorder.Get());
-                } else if (block.textLayout) {
-                    for (const auto& pill : block.inlineCodePills) {
-                        m_renderTarget->FillRoundedRectangle(
-                            D2D1::RoundedRect(pill, 3.0f, 3.0f),
-                            m_brushInlineCodeBg.Get()
-                        );
-                    }
-                    m_renderTarget->DrawTextLayout(
-                        D2D1::Point2F(block.bounds.left, block.bounds.top),
-                        block.textLayout.Get(),
-                        m_brushText.Get()
-                    );
-                }
-                break;
-            }
-
-            case Markdown::BlockType::CodeBlock: {
-                D2D1_ROUNDED_RECT rrect = D2D1::RoundedRect(block.bounds, 4.0f, 4.0f);
-                m_renderTarget->FillRoundedRectangle(rrect, m_brushCodeBg.Get());
-                m_renderTarget->DrawRoundedRectangle(rrect, m_brushCodeBorder.Get(), 1.0f);
-
-                if (block.textLayout) {
-                    m_renderTarget->DrawTextLayout(
-                        D2D1::Point2F(block.bounds.left + 12.0f, block.bounds.top + 12.0f),
-                        block.textLayout.Get(),
-                        m_brushCodeText.Get()
-                    );
-                }
-                break;
-            }
-
-            case Markdown::BlockType::ThematicBreak: {
-                m_renderTarget->DrawLine(
-                    D2D1::Point2F(block.bounds.left, block.bounds.top),
-                    D2D1::Point2F(block.bounds.right, block.bounds.top),
-                    m_brushRuleLine.Get(),
-                    1.5f
-                );
-                break;
-            }
-
-            case Markdown::BlockType::ListItem: {
-                if (block.isTask) {
-                    // Draw checkbox
-                    D2D1_RECT_F boxRect = D2D1::RectF(
-                        block.bounds.left + 4.0f, block.bounds.top + 2.0f,
-                        block.bounds.left + 18.0f, block.bounds.top + 16.0f
-                    );
-                    m_renderTarget->DrawRectangle(boxRect, m_brushText.Get(), 1.5f);
-                    if (block.isTaskChecked) {
-                        m_renderTarget->DrawLine(
-                            D2D1::Point2F(boxRect.left + 3.0f, boxRect.top + 7.0f),
-                            D2D1::Point2F(boxRect.left + 6.0f, boxRect.bottom - 4.0f),
-                            m_brushText.Get(), 2.0f
-                        );
-                        m_renderTarget->DrawLine(
-                            D2D1::Point2F(boxRect.left + 6.0f, boxRect.bottom - 4.0f),
-                            D2D1::Point2F(boxRect.right - 3.0f, boxRect.top + 3.0f),
-                            m_brushText.Get(), 2.0f
-                        );
-                    }
-                } else if (block.isOrdered) {
-                    // Number was rendered into text or separate
-                } else {
-                    // Bullet
-                    D2D1_ELLIPSE bullet = D2D1::Ellipse(
-                        D2D1::Point2F(block.bounds.left + 10.0f, block.bounds.top + 9.0f),
-                        3.0f, 3.0f
-                    );
-                    m_renderTarget->FillEllipse(bullet, m_brushText.Get());
-                }
-
-                if (block.textLayout) {
-                    for (const auto& pill : block.inlineCodePills) {
-                        m_renderTarget->FillRoundedRectangle(
-                            D2D1::RoundedRect(pill, 3.0f, 3.0f),
-                            m_brushInlineCodeBg.Get()
-                        );
-                    }
-                    m_renderTarget->DrawTextLayout(
-                        D2D1::Point2F(block.bounds.left + 28.0f, block.bounds.top),
-                        block.textLayout.Get(),
-                        m_brushText.Get()
-                    );
-                }
-                break;
-            }
-
-            case Markdown::BlockType::Table: {
-                for (const auto& row : block.tableRows) {
-                    for (const auto& cell : row) {
-                        if (cell.isHeader) {
-                            m_renderTarget->FillRectangle(cell.rect, m_brushTableHeaderBg.Get());
-                        }
-                        m_renderTarget->DrawRectangle(cell.rect, m_brushTableBorder.Get(), 1.0f);
-                        if (cell.textLayout) {
-                            m_renderTarget->DrawTextLayout(
-                                D2D1::Point2F(cell.rect.left + 8.0f, cell.rect.top + 6.0f),
-                                cell.textLayout.Get(),
-                                m_brushText.Get()
-                            );
-                        }
-                    }
-                }
-                break;
-            }
-
-            default:
-                break;
-            }
+        if (!m_effectsApplied) {
+            m_renderer.ApplyTextEffects(m_layout);
+            m_effectsApplied = true;
         }
 
-        HRESULT hr = m_renderTarget->EndDraw();
+        m_renderTarget->BeginDraw();
+        m_renderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
+        m_renderTarget->Clear(m_colors.background);
+        m_renderer.Draw(m_renderTarget.Get(), m_layout, std::round(m_scrollPos), m_viewHeight);
+
+        const HRESULT hr = m_renderTarget->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET) {
             DiscardDirect2DResources();
+            InvalidateRect(m_hwnd, nullptr, FALSE);
         }
     }
 
     EndPaint(m_hwnd, &ps);
 }
 
-void PreviewView::SetBlockTree(std::unique_ptr<Markdown::BlockTree> tree) {
-    m_tree = std::move(tree);
-    if (!m_tree) return;
+void PreviewView::Relayout() {
+    // Hover pointers reference the previous layout objects.
+    m_hoverLink = nullptr;
+    m_hoverUrl.clear();
+    m_pressedUrl.clear();
 
-    RECT rc{};
-    GetClientRect(m_hwnd, &rc);
-    float width = static_cast<float>(rc.right - rc.left);
-
-    m_layout.ComputeLayout(*m_tree, width, m_dpi, m_colors);
+    if (m_tree) {
+        m_layoutWidthDip = PxToDip(static_cast<float>(m_clientWidthPx));
+        m_layout.ComputeLayout(*m_tree, m_layoutWidthDip, m_dpi, m_colors);
+        m_effectsApplied = false;
+    }
     UpdateScrollbars();
     InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void PreviewView::SetBlockTree(std::unique_ptr<Markdown::BlockTree> tree) {
+    if (!tree) return;
+    m_tree = std::move(tree);
+    Relayout();
 }
 
 void PreviewView::SetDarkMode(bool isDark) {
     m_isDarkMode = isDark;
     m_colors = isDark ? PreviewThemeColors::Dark() : PreviewThemeColors::Light();
+
+    // Colours do not affect geometry: only the brushes (and text effects) are rebuilt.
     DiscardDirect2DResources();
-
     if (m_hwnd) {
-        SetWindowTheme(m_hwnd, isDark ? L"DarkMode_Explorer" : L"", nullptr);
+        SetWindowTheme(m_hwnd, isDark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+        SetWindowPos(m_hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        InvalidateRect(m_hwnd, nullptr, FALSE);
     }
-
-    if (m_tree) {
-        RECT rc{};
-        GetClientRect(m_hwnd, &rc);
-        m_layout.ComputeLayout(*m_tree, static_cast<float>(rc.right - rc.left), m_dpi, m_colors);
-    }
-    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void PreviewView::SetDpi(UINT dpi) {
+    if (dpi == 0 || dpi == m_dpi) return;
+    const float anchorLine = static_cast<float>(GetLineForCurrentScroll());
     m_dpi = dpi;
-    if (m_tree) {
-        RECT rc{};
-        GetClientRect(m_hwnd, &rc);
-        m_layout.ComputeLayout(*m_tree, static_cast<float>(rc.right - rc.left), m_dpi, m_colors);
-        UpdateScrollbars();
+    if (m_renderTarget) {
+        m_renderTarget->SetDpi(static_cast<float>(dpi), static_cast<float>(dpi));
     }
-    InvalidateRect(m_hwnd, nullptr, FALSE);
+    m_viewHeight = PxToDip(static_cast<float>(m_clientHeightPx));
+    Relayout();
+    ScrollToLine(static_cast<int>(anchorLine));
 }
 
 void PreviewView::OnResize(int width, int height) {
-    m_pageHeight = height;
+    m_clientWidthPx = width;
+    m_clientHeightPx = height;
+    m_viewHeight = PxToDip(static_cast<float>(height));
 
     if (m_renderTarget) {
         m_renderTarget->Resize(D2D1::SizeU(
@@ -465,57 +360,165 @@ void PreviewView::OnResize(int width, int height) {
             (std::max)(1u, static_cast<UINT32>(height))));
     }
 
-    if (m_tree) {
-        m_layout.ComputeLayout(*m_tree, static_cast<float>(width), m_dpi, m_colors);
+    // Height-only changes (status bar, maximise of a docked window) need no relayout.
+    const float widthDip = PxToDip(static_cast<float>(width));
+    if (m_tree && std::fabs(widthDip - m_layoutWidthDip) > 0.5f) {
+        Relayout();
+    } else {
+        UpdateScrollbars();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
     }
-
-    UpdateScrollbars();
-    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void PreviewView::UpdateScrollbars() {
-    float totalH = m_layout.GetTotalHeight();
-    m_maxScroll = (std::max)(0, static_cast<int>(totalH) - m_pageHeight);
-    m_scrollPos = (std::clamp)(m_scrollPos, 0, m_maxScroll);
+    const float totalH = m_layout.GetTotalHeight();
+    m_maxScroll = (std::max)(0.0f, totalH - m_viewHeight);
+    m_scrollPos = (std::clamp)(m_scrollPos, 0.0f, m_maxScroll);
 
     SCROLLINFO si{};
     si.cbSize = sizeof(si);
     si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
     si.nMin = 0;
-    si.nMax = static_cast<int>(totalH);
-    si.nPage = static_cast<UINT>(m_pageHeight);
-    si.nPos = m_scrollPos;
-
+    si.nMax = (std::max)(0, static_cast<int>(std::ceil(totalH)) - 1);
+    si.nPage = static_cast<UINT>((std::max)(0.0f, m_viewHeight));
+    si.nPos = static_cast<int>(m_scrollPos);
     SetScrollInfo(m_hwnd, SB_VERT, &si, TRUE);
 }
 
-void PreviewView::ScrollTo(int newPos, bool notify) {
-    newPos = (std::clamp)(newPos, 0, m_maxScroll);
-    if (newPos != m_scrollPos) {
-        m_scrollPos = newPos;
-        SetScrollPos(m_hwnd, SB_VERT, m_scrollPos, TRUE);
-        InvalidateRect(m_hwnd, nullptr, FALSE);
-        if (notify && m_onScrollCallback) {
-            int line = GetLineForCurrentScroll();
-            m_onScrollCallback(line);
+void PreviewView::ScrollTo(float newPos, bool notify) {
+    newPos = (std::clamp)(newPos, 0.0f, m_maxScroll);
+    if (std::fabs(newPos - m_scrollPos) < 0.01f) {
+        return;
+    }
+    m_scrollPos = newPos;
+    SetScrollPos(m_hwnd, SB_VERT, static_cast<int>(m_scrollPos), TRUE);
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+
+    // Content moved under the cursor: refresh the hovered link.
+    POINT pt{};
+    if (GetCursorPos(&pt) && ScreenToClient(m_hwnd, &pt)) {
+        RECT rc{};
+        GetClientRect(m_hwnd, &rc);
+        if (PtInRect(&rc, pt)) {
+            UpdateHover(PxToDip(static_cast<float>(pt.x)), PxToDip(static_cast<float>(pt.y)));
         }
+    }
+
+    if (notify && m_onScrollCallback) {
+        m_onScrollCallback(GetLineForCurrentScroll());
+    }
+}
+
+void PreviewView::ResetScroll() {
+    m_scrollPos = 0.0f;
+    UpdateScrollbars();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void PreviewView::UpdateHover(float xDip, float yDip) {
+    SetHoverLink(m_layout.HitTestLinkBox(xDip, yDip + m_scrollPos));
+}
+
+void PreviewView::SetHoverLink(const LinkHitBox* link) {
+    if (link == m_hoverLink) return;
+    if (m_hoverLink && link && m_hoverLink->layout == link->layout && m_hoverLink->url == link->url) {
+        m_hoverLink = link; // Another fragment of the same (wrapped) link
+        return;
+    }
+
+    // Underline every fragment of the hovered link, like a browser does.
+    auto setUnderline = [this](const LinkHitBox* target, BOOL on) {
+        if (!target || !target->layout) return;
+        for (const auto& block : m_layout.GetBlocks()) {
+            for (const auto& l : block.links) {
+                if (l.layout == target->layout && l.url == target->url) {
+                    l.layout->SetUnderline(on, DWRITE_TEXT_RANGE{l.textStart, l.textLength});
+                }
+            }
+        }
+    };
+    setUnderline(m_hoverLink, FALSE);
+    setUnderline(link, TRUE);
+
+    m_hoverLink = link;
+    m_hoverUrl = link ? link->url : std::string();
+    SetCursor(link ? m_hHandCursor : m_hArrowCursor);
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void PreviewView::OpenLink(const std::string& url) {
+    if (url.empty()) return;
+
+    if (url.front() == '#') {
+        ScrollToAnchor(url);
+        return;
+    }
+
+    // Web and mail links go to the default browser / mail client.
+    if (StartsWithIgnoreCase(url, "http://") || StartsWithIgnoreCase(url, "https://") ||
+        StartsWithIgnoreCase(url, "mailto:") || StartsWithIgnoreCase(url, "ftp://")) {
+        const std::wstring wideUrl = Utf8ToUtf16(url);
+        ShellExecuteW(m_hwnd, L"open", wideUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+    if (StartsWithIgnoreCase(url, "www.")) {
+        const std::wstring wideUrl = L"https://" + Utf8ToUtf16(url);
+        ShellExecuteW(m_hwnd, L"open", wideUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+
+    // Anything else is treated as a local path, relative to the document folder.
+    std::string target = url;
+    if (StartsWithIgnoreCase(target, "file:///")) {
+        target = target.substr(8);
+    } else if (target.find(':') != std::string::npos && target.find(":\\") == std::string::npos &&
+               target.find(":/") == std::string::npos) {
+        MessageBeep(MB_ICONWARNING); // Unknown scheme (javascript:, ms-settings:, ...): ignored
+        return;
+    }
+    std::string fragment;
+    if (const size_t hash = target.find('#'); hash != std::string::npos) {
+        fragment = target.substr(hash);
+        target.erase(hash);
+    }
+    std::filesystem::path path(Utf8ToUtf16(Markdown::PercentDecode(target)));
+    if (path.is_relative() && !m_baseDirectory.empty()) {
+        path = m_baseDirectory / path;
+    }
+    std::error_code ec;
+    path = std::filesystem::weakly_canonical(path, ec);
+    if (ec || !std::filesystem::exists(path, ec)) {
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+
+    const std::wstring ext = LowerExtension(path);
+    if (IsMarkdownExtension(ext) && m_onOpenDocument) {
+        m_onOpenDocument(path);
+    } else if (IsSafeToOpenExtension(ext) || std::filesystem::is_directory(path, ec)) {
+        ShellExecuteW(m_hwnd, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    } else {
+        // Never execute arbitrary files from a document: reveal them in Explorer instead.
+        const std::wstring args = L"/select,\"" + path.wstring() + L"\"";
+        ShellExecuteW(m_hwnd, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
     }
 }
 
 int PreviewView::GetLineForCurrentScroll() const {
-    return m_layout.GetLineForScrollY(static_cast<float>(m_scrollPos));
+    return m_layout.GetLineForScrollY(m_scrollPos);
 }
 
 void PreviewView::ScrollToAnchor(std::string_view slug) {
-    float y = m_layout.GetAnchorY(slug);
+    const float y = m_layout.GetAnchorY(slug);
     if (y >= 0.0f) {
-        ScrollTo(static_cast<int>(y - 16.0f), true);
+        ScrollTo(y - 12.0f, true);
+    } else {
+        MessageBeep(MB_ICONWARNING);
     }
 }
 
 void PreviewView::ScrollToLine(int line) {
-    float y = m_layout.GetScrollYForLine(line);
-    ScrollTo(static_cast<int>(y), false);
+    ScrollTo(m_layout.GetScrollYForLine(line), false);
 }
 
 } // namespace Pluma::Preview

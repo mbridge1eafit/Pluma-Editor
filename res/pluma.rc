@@ -92,6 +92,7 @@ BEGIN
         MENUITEM "Cor&tar\tCtrl+X",              IDM_EDIT_CUT
         MENUITEM "&Copiar\tCtrl+C",              IDM_EDIT_COPY
         MENUITEM "&Pegar\tCtrl+V",               IDM_EDIT_PASTE
+        MENUITEM "&Seleccionar todo\tCtrl+A",    IDM_EDIT_SELECTALL
         MENUITEM SEPARATOR
         MENUITEM "&Buscar...\tCtrl+F",           IDM_EDIT_FIND
         MENUITEM "&Reemplazar...\tCtrl+H",       IDM_EDIT_REPLACE

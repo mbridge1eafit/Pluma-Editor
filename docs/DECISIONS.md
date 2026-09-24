@@ -126,5 +126,20 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
 - **Alternativas descartadas:**
   - *Controles de interfaz de usuario de terceros o frameworks web embebidos:* Rechazados de plano según la arquitectura central del proyecto. Todos los diálogos, menús y barras de estado emplean las APIs nativas Win32 C++20 con coste cero en dependencias externas.
 
+---
 
+## [2026-09-24] Decisión 010: Revisión integral — renderizado Markdown, tablas sin desbordes y corrección de errores
 
+- **Contexto:** Una revisión completa del código detectó errores funcionales (contenido que desaparecía en la vista previa y en el PDF, riesgo de pérdida de datos al abrir archivos bloqueados, DPI ignorado) y carencias visuales (enlaces sin color, emojis monocromos, tablas cuyo texto se salía de las celdas).
+- **Decisión:**
+  - *Vista previa en DIPs con DPI explícito:* el render target Direct2D se crea con el DPI del monitor y todo el layout trabaja en píxeles independientes del dispositivo; ratón, scroll y tamaño de página se convierten a DIPs. Antes el layout se mezclaba con píxeles físicos y se descuadraba al 125–200 %.
+  - *Separación layout / dibujo:* `PreviewRenderer` dibuja un `LayoutEngine` sobre cualquier `ID2D1RenderTarget` (ventana o mapa de bits WIC), lo que permite verificar el renderizado fuera de pantalla.
+  - *Layout recursivo:* listas anidadas, párrafos y bloques de código dentro de elementos de lista, citas anidadas y números de listas ordenadas (antes solo se mostraba el primer párrafo de cada elemento y los números no se dibujaban).
+  - *Colores mediante drawing effects:* enlaces y código en línea reciben su pincel con `SetDrawingEffect`; los emojis se dibujan en color con `D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT`. Interlineado uniforme para que los emojis y el código no alteren la altura de las líneas.
+  - *Tablas con ancho automático:* se mide el ancho natural y el de la palabra más larga de cada celda y se reparte el espacio como un navegador (auto table layout); si ni así cabe, se reparte con un tope común para no partir palabras cortas y el resto se ajusta con `DWRITE_WORD_WRAPPING_EMERGENCY_BREAK`. Cada celda se recorta a su rectángulo, así que ningún texto puede invadir otra celda. El mismo algoritmo se aplica al PDF.
+  - *Parser:* entidades HTML completas (tabla de md4c y numéricas fuera de ASCII), HTML en bruto sin etiquetas visibles (`<br>`, `<img alt>`, comentarios ocultos), `:shortcodes:` de emoji al estilo GitHub fuera del código, y anclas (`Slugify`) compatibles con acentos.
+  - *PDF:* texto enriquecido por tramos (negrita, cursiva, código, enlaces, tachado) con métricas AFM reales de Helvetica; antes se perdía todo el texto con formato.
+  - *E/S:* `ReadDocument` lanza excepción si no puede leer (antes devolvía un documento vacío que al guardarse sobrescribía el archivo real), comparte el archivo con otros editores y detecta archivos ANSI (Windows-1252) con ida y vuelta exacta.
+- **Alternativas descartadas:**
+  - *Scroll horizontal por tabla:* complejo de implementar con Win32 puro y menos cómodo que ajustar el contenido al ancho disponible.
+  - *Decodificar imágenes con WIC en la vista previa:* aumenta el coste de arranque y memoria; se muestra un marcador clicable con el texto alternativo que abre la imagen.

@@ -2,10 +2,12 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <windowsx.h>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shobjidl.h> // IFileDialog
 #include <shellapi.h>
+#include <shlobj.h>   // SHAddToRecentDocs
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -29,12 +31,16 @@ namespace {
 constexpr wchar_t kWindowClassName[] = L"PlumaMainWindowClass";
 constexpr int kEditorControlId = 1010;
 constexpr int kStatusBarControlId = 1011;
+constexpr UINT WM_APP_REPARSE = WM_APP + 1;     // Coalesces bursts of edits into one parse request
+constexpr UINT kOutlineFirstCommand = 50000;
+constexpr size_t kOutlineMaxItems = 1000;
 UINT g_uFindReplaceMsg = 0;
 bool g_firstPaintSignaled = false;
 
 std::wstring Utf8ToUtf16(std::string_view utf8) {
     if (utf8.empty()) return {};
     int count = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+    if (count <= 0) return {};
     std::wstring result(count, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), result.data(), count);
     return result;
@@ -43,6 +49,7 @@ std::wstring Utf8ToUtf16(std::string_view utf8) {
 std::string Utf16ToUtf8(std::wstring_view utf16) {
     if (utf16.empty()) return {};
     int count = WideCharToMultiByte(CP_UTF8, 0, utf16.data(), static_cast<int>(utf16.size()), nullptr, 0, nullptr, nullptr);
+    if (count <= 0) return {};
     std::string result(count, '\0');
     WideCharToMultiByte(CP_UTF8, 0, utf16.data(), static_cast<int>(utf16.size()), result.data(), count, nullptr, nullptr);
     return result;
@@ -80,7 +87,7 @@ public:
 
         WNDCLASSEXW wcex{};
         wcex.cbSize = sizeof(WNDCLASSEXW);
-        wcex.style = CS_HREDRAW | CS_VREDRAW;
+        wcex.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
         wcex.lpfnWndProc = StaticWndProc;
         wcex.cbClsExtra = 0;
         wcex.cbWndExtra = 0;
@@ -98,8 +105,10 @@ public:
 
         RegisterClassExW(&wcex);
 
-        int width = Pluma::Platform::ScaleForDpi(1024, 96);
-        int height = Pluma::Platform::ScaleForDpi(720, 96);
+        // Initial size in logical pixels scaled to the primary monitor; WM_DPICHANGED fixes other monitors.
+        const UINT systemDpi = GetDpiForSystem();
+        int width = Pluma::Platform::ScaleForDpi(1100, systemDpi);
+        int height = Pluma::Platform::ScaleForDpi(760, systemDpi);
 
         m_hwnd = CreateWindowExW(
             WS_EX_ACCEPTFILES,
@@ -136,44 +145,90 @@ public:
     HWND GetHwnd() const noexcept { return m_hwnd; }
     HWND GetFindReplaceDialog() const noexcept { return m_hFindReplaceDlg; }
 
-    void OpenFile(const std::filesystem::path& path) {
-        if (!std::filesystem::exists(path)) {
+    void OpenFile(const std::filesystem::path& requestedPath) {
+        std::error_code ec;
+        std::filesystem::path path = std::filesystem::absolute(requestedPath, ec);
+        if (ec) path = requestedPath;
+
+        if (!std::filesystem::is_regular_file(path, ec)) {
+            std::wstring message = L"No se encontró el archivo:\n" + path.wstring();
+            MessageBoxW(m_hwnd, message.c_str(), L"Pluma", MB_OK | MB_ICONWARNING);
             return;
         }
 
+        Pluma::IO::DocumentData doc;
         try {
-            auto doc = Pluma::IO::ReadDocument(path);
-            m_currentPath = path;
-            m_encoding = doc.encoding;
-            m_lineEnding = doc.lineEnding;
-            m_hasBom = doc.hasBom;
-
-            m_editor.SetText(doc.contentUtf8);
-            UpdateTitle();
-            TriggerParse();
-            UpdateStatusBar();
+            doc = Pluma::IO::ReadDocument(path);
         } catch (...) {
-            MessageBoxW(m_hwnd, L"No se pudo abrir el archivo especificado.",
-                        L"Error", MB_OK | MB_ICONERROR);
+            // Never keep the path of a document we could not read: saving would overwrite it.
+            std::wstring message = L"No se pudo abrir el archivo:\n" + path.wstring() +
+                                   L"\n\nPuede que esté bloqueado por otra aplicación o que no tenga permisos de lectura.";
+            MessageBoxW(m_hwnd, message.c_str(), L"Error", MB_OK | MB_ICONERROR);
+            return;
         }
+
+        m_currentPath = path;
+        m_encoding = doc.encoding;
+        m_lineEnding = doc.lineEnding;
+        m_hasBom = doc.hasBom;
+
+        m_editor.SetEolMode(ToScintillaEol(m_lineEnding));
+        m_editor.SetText(doc.contentUtf8);
+        m_preview.SetBaseDirectory(m_currentPath.parent_path());
+        m_preview.ResetScroll();
+        if (m_syncScroll) m_syncScroll->Reset();
+        SHAddToRecentDocs(SHARD_PATHW, m_currentPath.c_str());
+
+        UpdateTitle();
+        TriggerParse();
+        UpdateStatusBar();
     }
 
     bool SaveFile() {
         if (m_currentPath.empty()) {
             return SaveAsFile();
         }
+        return WriteCurrentDocument(m_currentPath);
+    }
 
+    bool WriteCurrentDocument(const std::filesystem::path& path) {
+        std::string content = m_editor.GetText();
+        if (!Pluma::IO::CanEncodeLosslessly(content, m_encoding)) {
+            const int answer = MessageBoxW(m_hwnd,
+                L"El documento contiene caracteres que no existen en la codificación ANSI (Windows-1252) "
+                L"del archivo, como emojis o letras de otros alfabetos.\n\n"
+                L"¿Desea guardarlo en UTF-8 para conservarlos?\n\n"
+                L"Sí: guardar en UTF-8.   No: guardar en ANSI (esos caracteres se sustituyen por \"?\").",
+                L"Pluma", MB_YESNOCANCEL | MB_ICONWARNING);
+            if (answer == IDCANCEL) {
+                return false;
+            }
+            if (answer == IDYES) {
+                m_encoding = Pluma::IO::Encoding::Utf8;
+                m_hasBom = false;
+            }
+        }
         try {
-            std::string content = m_editor.GetText();
-            Pluma::IO::WriteDocumentAtomic(m_currentPath, content, m_encoding, m_lineEnding);
-            m_editor.SetSavePoint();
-            UpdateTitle();
-            UpdateStatusBar();
-            return true;
+            Pluma::IO::WriteDocumentAtomic(path, content, m_encoding, m_lineEnding);
         } catch (...) {
-            MessageBoxW(m_hwnd, L"Error al guardar el archivo.",
-                        L"Error", MB_OK | MB_ICONERROR);
+            std::wstring message = L"Error al guardar el archivo:\n" + path.wstring() +
+                                   L"\n\nCompruebe que la carpeta existe y que tiene permisos de escritura.";
+            MessageBoxW(m_hwnd, message.c_str(), L"Error", MB_OK | MB_ICONERROR);
             return false;
+        }
+        m_currentPath = path;
+        m_editor.SetSavePoint();
+        m_preview.SetBaseDirectory(m_currentPath.parent_path());
+        UpdateTitle();
+        UpdateStatusBar();
+        return true;
+    }
+
+    static int ToScintillaEol(Pluma::IO::LineEnding lineEnding) {
+        switch (lineEnding) {
+        case Pluma::IO::LineEnding::LF: return SC_EOL_LF;
+        case Pluma::IO::LineEnding::CR: return SC_EOL_CR;
+        default:                        return SC_EOL_CRLF;
         }
     }
 
@@ -204,11 +259,12 @@ public:
                 PWSTR pszFilePath = nullptr;
                 hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
                 if (SUCCEEDED(hr)) {
-                    m_currentPath = pszFilePath;
+                    // The current path only changes once the write succeeded.
+                    std::filesystem::path target(pszFilePath);
                     CoTaskMemFree(pszFilePath);
                     pItem->Release();
                     pFileSave->Release();
-                    return SaveFile();
+                    return WriteCurrentDocument(target);
                 }
                 pItem->Release();
             }
@@ -249,7 +305,8 @@ public:
                     CoTaskMemFree(pszFilePath);
 
                     Pluma::Export::HtmlExportOptions options;
-                    options.title = m_currentPath.empty() ? "Pluma Document" : m_currentPath.stem().string();
+                    // path::string() uses the ANSI code page and throws on characters it cannot represent.
+                    options.title = m_currentPath.empty() ? "Documento Pluma" : Utf16ToUtf8(m_currentPath.stem().wstring());
                     options.theme = Pluma::Export::HtmlTheme::Auto;
 
                     std::string markdown = m_editor.GetText();
@@ -296,7 +353,8 @@ public:
                     CoTaskMemFree(pszFilePath);
 
                     Pluma::Export::PdfExportOptions options;
-                    options.title = m_currentPath.empty() ? "Pluma Document" : m_currentPath.stem().string();
+                    // path::string() uses the ANSI code page and throws on characters it cannot represent.
+                    options.title = m_currentPath.empty() ? "Documento Pluma" : Utf16ToUtf8(m_currentPath.stem().wstring());
                     options.pageSize = Pluma::Export::PageSize::A4;
                     options.marginMm = 20.0f;
 
@@ -355,7 +413,11 @@ public:
         m_encoding = Pluma::IO::Encoding::Utf8;
         m_lineEnding = Pluma::IO::LineEnding::CRLF;
         m_hasBom = false;
+        m_editor.SetEolMode(ToScintillaEol(m_lineEnding));
         m_editor.SetText("");
+        m_preview.SetBaseDirectory({});
+        m_preview.ResetScroll();
+        if (m_syncScroll) m_syncScroll->Reset();
         UpdateTitle();
         TriggerParse();
         UpdateStatusBar();
@@ -395,10 +457,21 @@ public:
     }
 
     void TriggerParse() {
+        m_reparsePosted = false;
+        m_statsValid = false;
         if (!m_parseWorker) return;
         m_docVersion++;
         std::string text = m_editor.GetText();
         m_parseWorker->RequestParse(std::move(text), m_docVersion);
+    }
+
+    // Schedules a parse once the current burst of modifications (typing, paste, Replace All)
+    // has been processed, so the document is copied once instead of once per change.
+    void ScheduleParse() {
+        m_statsValid = false;
+        if (!m_reparsePosted) {
+            m_reparsePosted = PostMessageW(m_hwnd, WM_APP_REPARSE, 0, 0) != FALSE;
+        }
     }
 
     void RelayoutChildren() {
@@ -458,10 +531,10 @@ public:
 
     void UpdateStatusBarParts() {
         if (!m_hwndStatusBar) return;
-        int p0 = Pluma::Platform::ScaleForDpi(120, m_dpi);
-        int p1 = Pluma::Platform::ScaleForDpi(340, m_dpi);
-        int p2 = Pluma::Platform::ScaleForDpi(460, m_dpi);
-        int p3 = Pluma::Platform::ScaleForDpi(550, m_dpi);
+        int p0 = Pluma::Platform::ScaleForDpi(130, m_dpi);
+        int p1 = Pluma::Platform::ScaleForDpi(390, m_dpi);
+        int p2 = Pluma::Platform::ScaleForDpi(500, m_dpi);
+        int p3 = Pluma::Platform::ScaleForDpi(570, m_dpi);
         int sbParts[5] = { p0, p1, p2, p3, -1 };
         SendMessageW(m_hwndStatusBar, SB_SETPARTS, 5, reinterpret_cast<LPARAM>(sbParts));
     }
@@ -470,15 +543,21 @@ public:
         if (!m_hwndStatusBar) return;
 
         auto pos = m_editor.GetCursorPosition();
-        auto stats = m_editor.GetDocumentStats();
+        // Word count scans the whole buffer: only redo it after the text changed, not on caret moves.
+        if (!m_statsValid) {
+            m_cachedStats = m_editor.GetDocumentStats();
+            m_statsValid = true;
+        }
+        const auto& stats = m_cachedStats;
 
         wchar_t bufPos[64];
         swprintf_s(bufPos, L"Lín %d, Col %d", pos.line, pos.column);
-        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(bufPos));
+        SetStatusText(0, bufPos);
 
         wchar_t bufStats[128];
-        swprintf_s(bufStats, L"%zu palabras, %zu caracteres", stats.words, stats.characters);
-        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 1, reinterpret_cast<LPARAM>(bufStats));
+        swprintf_s(bufStats, L"%zu %s, %zu %s", stats.words, stats.words == 1 ? L"palabra" : L"palabras",
+                   stats.characters, stats.characters == 1 ? L"carácter" : L"caracteres");
+        SetStatusText(1, bufStats);
 
         const wchar_t* encStr = L"UTF-8";
         switch (m_encoding) {
@@ -486,11 +565,17 @@ public:
         case Pluma::IO::Encoding::Utf8Bom: encStr = L"UTF-8 BOM"; break;
         case Pluma::IO::Encoding::Utf16LE: encStr = L"UTF-16 LE"; break;
         case Pluma::IO::Encoding::Utf16BE: encStr = L"UTF-16 BE"; break;
+        case Pluma::IO::Encoding::Ansi: encStr = L"ANSI (1252)"; break;
         }
-        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 2, reinterpret_cast<LPARAM>(encStr));
+        SetStatusText(2, encStr);
 
-        const wchar_t* leStr = (m_lineEnding == Pluma::IO::LineEnding::LF) ? L"LF" : L"CRLF";
-        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 3, reinterpret_cast<LPARAM>(leStr));
+        const wchar_t* leStr = L"CRLF";
+        switch (m_lineEnding) {
+        case Pluma::IO::LineEnding::LF: leStr = L"LF"; break;
+        case Pluma::IO::LineEnding::CR: leStr = L"CR"; break;
+        default: break;
+        }
+        SetStatusText(3, leStr);
 
         const wchar_t* modeStr = L"Vista dividida";
         switch (m_viewMode) {
@@ -498,7 +583,15 @@ public:
         case ViewMode::Split: modeStr = L"Vista dividida"; break;
         case ViewMode::PreviewOnly: modeStr = L"Solo vista previa"; break;
         }
-        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 4, reinterpret_cast<LPARAM>(modeStr));
+        SetStatusText(4, modeStr);
+    }
+
+    // Updates a status bar part only when its text changed (avoids repainting on every caret move).
+    void SetStatusText(int part, const wchar_t* text) {
+        if (part < 0 || part >= static_cast<int>(std::size(m_statusTexts))) return;
+        if (m_statusTexts[part] == text) return;
+        m_statusTexts[part] = text;
+        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, static_cast<WPARAM>(part), reinterpret_cast<LPARAM>(text));
     }
 
     void ShowOutlinePopup() {
@@ -520,13 +613,12 @@ public:
 
         if (tree && tree->root) {
             for (const auto& child : tree->root->children) {
+                if (headings.size() >= kOutlineMaxItems) break;
                 if (child && child->type == Pluma::Markdown::BlockType::Heading) {
-                    std::string title;
-                    for (const auto& span : child->inlineContent) {
-                        title += span.text;
-                    }
-                    std::wstring wTitle = Utf8ToUtf16(title);
+                    // Full visible text, including **bold**, `code` and [link] parts.
+                    std::wstring wTitle = Utf8ToUtf16(Pluma::Markdown::ExtractPlainText(child->inlineContent));
                     if (wTitle.empty()) wTitle = L"(Sin título)";
+                    if (wTitle.size() > 80) wTitle = wTitle.substr(0, 79) + L"…";
                     headings.emplace_back(child->startLine, child->level, std::move(wTitle));
                 }
             }
@@ -535,23 +627,43 @@ public:
         if (headings.empty()) {
             AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"(No hay encabezados)");
         } else {
+            const int currentLine = m_editor.GetCursorPosition().line;
             for (size_t i = 0; i < headings.size(); ++i) {
-                std::wstring prefix(static_cast<size_t>((headings[i].level - 1) * 2), L' ');
-                for (int l = 0; l < headings[i].level; ++l) prefix += L'#';
-                prefix += L" ";
-                std::wstring itemText = prefix + headings[i].title;
-                AppendMenuW(hMenu, MF_STRING, 50000 + i, itemText.c_str());
+                // Indentation shows the hierarchy; "&" would be read as a mnemonic prefix.
+                std::wstring itemText(static_cast<size_t>((headings[i].level - 1) * 4), L' ');
+                itemText += (headings[i].level == 1) ? L"■  " : (headings[i].level == 2) ? L"▪  " : L"·  ";
+                for (wchar_t ch : headings[i].title) {
+                    itemText += ch;
+                    if (ch == L'&') itemText += L'&';
+                }
+                UINT flags = MF_STRING;
+                // Mark the section that contains the caret.
+                const bool isCurrent = headings[i].line <= currentLine &&
+                                       (i + 1 == headings.size() || headings[i + 1].line > currentLine);
+                if (isCurrent) flags |= MF_CHECKED;
+                AppendMenuW(hMenu, flags, kOutlineFirstCommand + static_cast<UINT>(i), itemText.c_str());
             }
         }
 
+        // Open next to the caret when invoked from the keyboard.
         POINT pt{};
         GetCursorPos(&pt);
-        int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+        if (GetKeyState(VK_CONTROL) & 0x8000) {
+            const sptr_t caret = m_editor.Call(SCI_GETCURRENTPOS);
+            pt.x = static_cast<LONG>(m_editor.Call(SCI_POINTXFROMPOSITION, 0, caret));
+            pt.y = static_cast<LONG>(m_editor.Call(SCI_POINTYFROMPOSITION, 0, caret) +
+                                     m_editor.Call(SCI_TEXTHEIGHT, 0));
+            ClientToScreen(m_editor.GetHwnd(), &pt);
+        }
+        const int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_NONOTIFY,
+                                       pt.x, pt.y, 0, m_hwnd, nullptr);
         DestroyMenu(hMenu);
 
-        if (cmd >= 50000 && static_cast<size_t>(cmd - 50000) < headings.size()) {
-            int line = headings[cmd - 50000].line;
+        if (cmd >= static_cast<int>(kOutlineFirstCommand) &&
+            static_cast<size_t>(cmd - kOutlineFirstCommand) < headings.size()) {
+            int line = headings[cmd - kOutlineFirstCommand].line;
             m_editor.GotoLine(line);
+            m_editor.Call(SCI_SETFIRSTVISIBLELINE, m_editor.Call(SCI_VISIBLEFROMDOCLINE, line - 1));
             m_preview.ScrollToLine(line);
             m_editor.SetFocus();
             UpdateStatusBar();
@@ -587,21 +699,36 @@ public:
                     int btnH = Pluma::Platform::ScaleForDpi(28, dpi);
                     int spacing = Pluma::Platform::ScaleForDpi(12, dpi);
 
-                    HWND hStatic = CreateWindowW(L"STATIC", L"Número de línea:", WS_CHILD | WS_VISIBLE,
-                                                 pad, pad, 200, lblH, hwnd, nullptr, nullptr, nullptr);
+                    RECT rcClient{};
+                    GetClientRect(hwnd, &rcClient);
+                    const int innerW = (rcClient.right - rcClient.left) - 2 * pad;
+
+                    const int lineCount = self ? static_cast<int>(self->m_editor.Call(SCI_GETLINECOUNT)) : 1;
+                    const std::wstring label = L"Número de línea (1 - " + std::to_wstring(lineCount) + L"):";
+                    HWND hStatic = CreateWindowW(L"STATIC", label.c_str(), WS_CHILD | WS_VISIBLE,
+                                                 pad, pad, innerW, lblH, hwnd, nullptr, nullptr, nullptr);
                     HWND hEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
-                                                 pad, pad + lblH + 4, 210, editH, hwnd,
+                                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL,
+                                                 pad, pad + lblH + Pluma::Platform::ScaleForDpi(4, dpi), innerW, editH, hwnd,
                                                  reinterpret_cast<HMENU>(101), nullptr, nullptr);
                     int btnY = pad + lblH + editH + spacing;
+                    const int btnGap = Pluma::Platform::ScaleForDpi(8, dpi);
                     HWND hOk = CreateWindowW(L"BUTTON", L"Aceptar",
                                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                                             pad + 15, btnY, btnW, btnH, hwnd,
+                                             pad + innerW - 2 * btnW - btnGap, btnY, btnW, btnH, hwnd,
                                              reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
                     HWND hCancel = CreateWindowW(L"BUTTON", L"Cancelar",
                                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                                 pad + 15 + btnW + 12, btnY, btnW, btnH, hwnd,
+                                                 pad + innerW - btnW, btnY, btnW, btnH, hwnd,
                                                  reinterpret_cast<HMENU>(IDCANCEL), nullptr, nullptr);
+
+                    // Pre-fill with the current line, selected so typing replaces it.
+                    if (self) {
+                        const std::wstring current = std::to_wstring(self->m_editor.GetCursorPosition().line);
+                        SetWindowTextW(hEdit, current.c_str());
+                        SendMessageW(hEdit, EM_SETSEL, 0, -1);
+                    }
+                    SetPropW(hwnd, L"PlumaDlgFont", hFont);
 
                     if (dark) {
                         SetWindowTheme(hEdit, L"DarkMode_Explorer", nullptr);
@@ -617,6 +744,12 @@ public:
                     }
                     SetFocus(hEdit);
                     return 0;
+                }
+                case WM_NCDESTROY: {
+                    if (auto hDlgFont = static_cast<HFONT>(RemovePropW(hwnd, L"PlumaDlgFont"))) {
+                        DeleteObject(hDlgFont);
+                    }
+                    break;
                 }
                 case WM_ERASEBKGND: {
                     HDC hdc = reinterpret_cast<HDC>(wParam);
@@ -661,6 +794,8 @@ public:
                         GetDlgItemTextW(hwnd, 101, buf, 31);
                         int line = _wtoi(buf);
                         if (line > 0 && self) {
+                            const int lineCount = static_cast<int>(self->m_editor.Call(SCI_GETLINECOUNT));
+                            line = (std::min)(line, lineCount);
                             self->m_editor.GotoLine(line);
                             self->m_preview.ScrollToLine(line);
                             self->m_editor.SetFocus();
@@ -688,19 +823,31 @@ public:
             s_registered = true;
         }
 
-        int dlgW = Pluma::Platform::ScaleForDpi(260, m_dpi);
-        int dlgH = Pluma::Platform::ScaleForDpi(160, m_dpi);
+        // Client area sized in logical units; the frame is added for the current DPI.
+        RECT rcDlg{0, 0, Pluma::Platform::ScaleForDpi(300, m_dpi), Pluma::Platform::ScaleForDpi(128, m_dpi)};
+        const DWORD dlgStyle = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+        const DWORD dlgExStyle = WS_EX_DLGMODALFRAME;
+        AdjustWindowRectExForDpi(&rcDlg, dlgStyle, FALSE, dlgExStyle, m_dpi);
+        const int dlgW = rcDlg.right - rcDlg.left;
+        const int dlgH = rcDlg.bottom - rcDlg.top;
 
         RECT rc{};
         GetWindowRect(m_hwnd, &rc);
         int x = rc.left + (rc.right - rc.left - dlgW) / 2;
         int y = rc.top + (rc.bottom - rc.top - dlgH) / 2;
-        HWND hDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PlumaGotoLineClass", L"Ir a línea",
-                                   WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        HWND hDlg = CreateWindowExW(dlgExStyle, L"PlumaGotoLineClass", L"Ir a línea",
+                                   dlgStyle | WS_VISIBLE,
                                    x, y, dlgW, dlgH, m_hwnd, nullptr, m_hInstance, this);
+        if (!hDlg) return;
         EnableWindow(m_hwnd, FALSE);
-        MSG msg;
-        while (IsWindow(hDlg) && GetMessageW(&msg, nullptr, 0, 0)) {
+        MSG msg{};
+        while (IsWindow(hDlg)) {
+            const BOOL got = GetMessageW(&msg, nullptr, 0, 0);
+            if (got == 0) {
+                PostQuitMessage(static_cast<int>(msg.wParam)); // Let the main loop see WM_QUIT
+                break;
+            }
+            if (got < 0) break;
             if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
                 DestroyWindow(hDlg);
                 break;
@@ -711,7 +858,9 @@ public:
             }
         }
         EnableWindow(m_hwnd, TRUE);
-        SetFocus(m_hwnd);
+        if (IsWindow(hDlg)) DestroyWindow(hDlg);
+        SetForegroundWindow(m_hwnd);
+        m_editor.SetFocus();
     }
 
     void ShowFindDialog() {
@@ -773,21 +922,16 @@ public:
             }
         } else if (pfr->Flags & FR_REPLACE) {
             std::string repStr = Utf16ToUtf8(pfr->lpstrReplaceWith);
-            sptr_t start = m_editor.Call(SCI_GETSELECTIONSTART);
-            sptr_t end = m_editor.Call(SCI_GETSELECTIONEND);
-            if (start != end) {
+            // Replace only when the selection is the current match; otherwise just find it first.
+            if (m_editor.SelectionMatches(findStr, matchCase)) {
                 m_editor.Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(repStr.c_str()));
-                TriggerParse();
-                UpdateStatusBar();
             }
-            m_editor.FindNext(findStr, matchCase, wholeWord, false, forward);
+            if (!m_editor.FindNext(findStr, matchCase, wholeWord, false, forward)) {
+                MessageBoxW(m_hwnd, L"No se encontraron más coincidencias.", L"Reemplazar", MB_OK | MB_ICONINFORMATION);
+            }
         } else if (pfr->Flags & FR_REPLACEALL) {
             std::string repStr = Utf16ToUtf8(pfr->lpstrReplaceWith);
             int replaced = m_editor.ReplaceAll(findStr, repStr, matchCase, wholeWord, false);
-            if (replaced > 0) {
-                TriggerParse();
-                UpdateStatusBar();
-            }
             std::wstring msg = L"Se reemplazaron " + std::to_wstring(replaced) + L" ocurrencia(s).";
             MessageBoxW(m_hwnd, msg.c_str(), L"Reemplazar", MB_OK | MB_ICONINFORMATION);
         }
@@ -828,6 +972,8 @@ private:
             Pluma::Platform::SetPreferredThemeMode(m_appTheme);
             Pluma::Platform::ApplyThemeToWindow(m_hwnd, darkMode);
 
+            m_dpi = Pluma::Platform::GetWindowDpi(m_hwnd);
+
             RECT rc;
             GetClientRect(m_hwnd, &rc);
             int width = (std::max)(100, (int)(rc.right - rc.left));
@@ -844,6 +990,12 @@ private:
 
             m_preview.Create(m_hwnd, m_hInstance, width / 2, 0, width / 2, height);
             m_preview.SetDarkMode(darkMode);
+            m_preview.SetOnOpenDocumentCallback([this](const std::filesystem::path& path) {
+                // Links to other Markdown files open in Pluma itself.
+                if (PromptSaveChanges()) {
+                    OpenFile(path);
+                }
+            });
 
             m_syncScroll = std::make_unique<Pluma::Sync::SyncScrollController>(&m_editor, &m_preview);
             m_parseWorker = std::make_unique<Pluma::Markdown::ParseWorker>(m_hwnd, Pluma::Markdown::WM_USER_PARSE_COMPLETE);
@@ -852,6 +1004,7 @@ private:
             TriggerParse();
             UpdateStatusBar();
             UpdateThemeMenuRadio();
+            UpdateWordWrapMenuCheck();
             m_editor.SetFocus();
             return 0;
         }
@@ -866,20 +1019,26 @@ private:
             return 1;
 
         case WM_SETFOCUS:
-            if (m_viewMode != ViewMode::PreviewOnly) {
+            if (m_viewMode == ViewMode::PreviewOnly) {
+                ::SetFocus(m_preview.GetHwnd()); // Keyboard scrolling in the preview
+            } else {
                 m_editor.SetFocus();
             }
             return 0;
 
         case WM_DROPFILES: {
             HDROP hDrop = reinterpret_cast<HDROP>(wParam);
-            wchar_t filePath[MAX_PATH];
-            if (DragQueryFileW(hDrop, 0, filePath, MAX_PATH) > 0) {
+            // Query the length first: dropped paths can exceed MAX_PATH.
+            const UINT length = DragQueryFileW(hDrop, 0, nullptr, 0);
+            std::wstring filePath(length, L'\0');
+            const bool gotPath = length > 0 && DragQueryFileW(hDrop, 0, filePath.data(), length + 1) > 0;
+            DragFinish(hDrop);
+            if (gotPath) {
+                SetForegroundWindow(m_hwnd);
                 if (PromptSaveChanges()) {
                     OpenFile(filePath);
                 }
             }
-            DragFinish(hDrop);
             return 0;
         }
 
@@ -891,7 +1050,10 @@ private:
                     UpdateTitle();
                 } else if (scn->nmhdr.code == SCN_MODIFIED) {
                     if (scn->modificationType & (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT)) {
-                        TriggerParse();
+                        ScheduleParse();
+                        if (scn->linesAdded != 0) {
+                            m_editor.UpdateLineNumberMargin();
+                        }
                     }
                 } else if (scn->nmhdr.code == SCN_UPDATEUI) {
                     UpdateStatusBar();
@@ -904,6 +1066,12 @@ private:
             }
             return 0;
         }
+
+        case WM_APP_REPARSE:
+            if (m_reparsePosted) {
+                TriggerParse();
+            }
+            return 0;
 
         case Pluma::Markdown::WM_USER_PARSE_COMPLETE: {
             uint64_t version = static_cast<uint64_t>(wParam);
@@ -919,7 +1087,7 @@ private:
 
         case WM_LBUTTONDOWN: {
             if (m_viewMode == ViewMode::Split) {
-                int mouseX = LOWORD(lParam);
+                int mouseX = GET_X_LPARAM(lParam);
                 RECT rc{};
                 GetClientRect(m_hwnd, &rc);
                 int clientW = static_cast<int>(rc.right - rc.left);
@@ -938,7 +1106,8 @@ private:
 
         case WM_MOUSEMOVE: {
             if (m_isDraggingSplitter) {
-                int mouseX = LOWORD(lParam);
+                // Signed coordinate: while captured the mouse may go left of the window.
+                int mouseX = GET_X_LPARAM(lParam);
                 RECT rc{};
                 GetClientRect(m_hwnd, &rc);
                 int w = rc.right - rc.left;
@@ -950,7 +1119,7 @@ private:
             }
 
             if (m_viewMode == ViewMode::Split) {
-                int mouseX = LOWORD(lParam);
+                int mouseX = GET_X_LPARAM(lParam);
                 RECT rc{};
                 GetClientRect(m_hwnd, &rc);
                 int clientW = static_cast<int>(rc.right - rc.left);
@@ -985,6 +1154,21 @@ private:
             if (m_isDraggingSplitter) {
                 m_isDraggingSplitter = false;
                 ReleaseCapture();
+                InvalidateRect(m_hwnd, nullptr, FALSE);
+                return 0;
+            }
+            break;
+        }
+
+        case WM_CAPTURECHANGED:
+            m_isDraggingSplitter = false;
+            break;
+
+        case WM_LBUTTONDBLCLK: {
+            // Double-click on the divider restores a 50/50 split.
+            if (m_viewMode == ViewMode::Split) {
+                m_splitRatio = 0.5f;
+                RelayoutChildren();
                 return 0;
             }
             break;
@@ -1030,6 +1214,7 @@ private:
         case WM_DPICHANGED: {
             m_dpi = HIWORD(wParam);
             m_preview.SetDpi(m_dpi);
+            m_statusFont.reset();
             UpdateStatusBarParts();
             auto* const prcNewWindow = reinterpret_cast<RECT*>(lParam);
             SetWindowPos(m_hwnd, nullptr,
@@ -1117,6 +1302,10 @@ private:
                 return 0;
             case IDM_EDIT_WRAP:
                 m_editor.ToggleWordWrap();
+                UpdateWordWrapMenuCheck();
+                return 0;
+            case IDM_EDIT_SELECTALL:
+                m_editor.SelectAll();
                 return 0;
             case IDM_EDIT_FIND:
                 ShowFindDialog();
@@ -1194,12 +1383,19 @@ private:
             }
             return 0;
 
-        case WM_DESTROY:
+        case WM_DESTROY: {
             if (m_parseWorker) {
                 m_parseWorker->Stop();
             }
+            // Trees already posted by the worker are owned by their messages: free them.
+            MSG pending;
+            while (PeekMessageW(&pending, m_hwnd, Pluma::Markdown::WM_USER_PARSE_COMPLETE,
+                                Pluma::Markdown::WM_USER_PARSE_COMPLETE, PM_REMOVE)) {
+                delete reinterpret_cast<Pluma::Markdown::BlockTree*>(pending.lParam);
+            }
             PostQuitMessage(0);
             return 0;
+        }
 
         default:
             break;
@@ -1243,6 +1439,12 @@ private:
         }
         InvalidateRect(m_hwnd, nullptr, TRUE);
         UpdateStatusBar();
+    }
+
+    void UpdateWordWrapMenuCheck() {
+        if (HMENU hMenu = GetMenu(m_hwnd)) {
+            CheckMenuItem(hMenu, IDM_EDIT_WRAP, MF_BYCOMMAND | (m_editor.GetWordWrap() ? MF_CHECKED : MF_UNCHECKED));
+        }
     }
 
     void UpdateThemeMenuRadio() {
@@ -1297,13 +1499,15 @@ private:
             FillRect(memDC, &rcTopBorder, hbrBorder);
             DeleteObject(hbrBorder);
 
-            // Font
-            HFONT hFont = CreateFontW(
-                -Pluma::Platform::ScaleForDpi(12, self->m_dpi), 0, 0, 0,
-                FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            HFONT oldFont = static_cast<HFONT>(SelectObject(memDC, hFont));
+            // Font (cached per DPI)
+            if (!self->m_statusFont) {
+                self->m_statusFont.reset(CreateFontW(
+                    -Pluma::Platform::ScaleForDpi(12, self->m_dpi), 0, 0, 0,
+                    FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                    OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                    DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI"));
+            }
+            HFONT oldFont = static_cast<HFONT>(SelectObject(memDC, self->m_statusFont.get()));
             SetBkMode(memDC, TRANSPARENT);
             SetTextColor(memDC, textCol);
 
@@ -1352,7 +1556,6 @@ private:
             }
 
             SelectObject(memDC, oldFont);
-            DeleteObject(hFont);
 
             BitBlt(hdc, 0, 0, rcClient.right, rcClient.bottom, memDC, 0, 0, SRCCOPY);
             SelectObject(memDC, oldBmp);
@@ -1393,6 +1596,16 @@ private:
     Pluma::IO::LineEnding m_lineEnding = Pluma::IO::LineEnding::CRLF;
     bool m_hasBom = false;
 
+    bool m_reparsePosted = false;
+    bool m_statsValid = false;
+    Pluma::Editor::EditorView::DocumentStats m_cachedStats{};
+    std::wstring m_statusTexts[5];
+
+    struct FontDeleter {
+        void operator()(HFONT font) const noexcept { if (font) DeleteObject(font); }
+    };
+    std::unique_ptr<std::remove_pointer_t<HFONT>, FontDeleter> m_statusFont;
+
     HWND m_hwndStatusBar = nullptr;
     HWND m_hFindReplaceDlg = nullptr;
     FINDREPLACEW m_fr{};
@@ -1421,8 +1634,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPWSTR /*l
     std::filesystem::path initialFilePath;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (argv && argc > 1) {
-        initialFilePath = argv[1];
+    if (argv) {
+        if (argc > 1) {
+            initialFilePath = argv[1];
+        }
         LocalFree(argv);
     }
 

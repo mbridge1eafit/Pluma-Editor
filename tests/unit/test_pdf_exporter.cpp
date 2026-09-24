@@ -91,3 +91,46 @@ TEST(PdfExporterTest, ExportToFileOnDisk) {
 
     std::filesystem::remove(tempFile);
 }
+
+TEST(PdfExporterTest, KeepsFormattedTextAndNestedContent) {
+    std::string markdown =
+        "Texto con **negrita**, *cursiva* y [enlace](https://x.com).\n\n"
+        "- Padre\n"
+        "  - Hijo anidado\n\n"
+        "> Cita con **fuerza**\n";
+
+    auto pdfBytes = PdfExporter::ExportMarkdownToBytes(markdown);
+    std::string pdfStr(pdfBytes.begin(), pdfBytes.end());
+
+    // Text inside emphasis, links and nested blocks used to be dropped.
+    EXPECT_NE(pdfStr.find("(negrita)"), std::string::npos);
+    EXPECT_NE(pdfStr.find("(cursiva)"), std::string::npos);
+    EXPECT_NE(pdfStr.find("(enlace)"), std::string::npos);
+    EXPECT_NE(pdfStr.find("Hijo anidado"), std::string::npos);
+    EXPECT_NE(pdfStr.find("(fuerza)"), std::string::npos);
+    EXPECT_NE(pdfStr.find("/F2 "), std::string::npos); // Bold font actually used
+    EXPECT_NE(pdfStr.find("/Producer (Pluma)"), std::string::npos);
+}
+
+TEST(PdfExporterTest, LongTableCellsWrapInsideTheirColumn) {
+    std::string markdown =
+        "| Clave | Valor |\n|---|---|\n"
+        "| x | Un texto muy largo que no cabe en una sola línea de la celda y que antes se salía de la tabla "
+        "por la derecha, atravesando el margen de la página y cortándose en el borde del papel |\n";
+
+    auto pdfBytes = PdfExporter::ExportMarkdownToBytes(markdown);
+    std::string pdfStr(pdfBytes.begin(), pdfBytes.end());
+
+    // The long cell is split over several text operations instead of one overflowing line.
+    // Before, the whole cell was a single Tj running past the right margin.
+    EXPECT_EQ(pdfStr.find("de la tabla por la derecha, atravesando el margen de la p\\341gina y cort\\341ndose"),
+              std::string::npos);
+    EXPECT_NE(pdfStr.find("(Un texto muy largo"), std::string::npos);
+    EXPECT_NE(pdfStr.find("papel"), std::string::npos);
+}
+
+TEST(PdfExporterTest, EmojiAreSkippedNotQuestionMarks) {
+    auto pdfBytes = PdfExporter::ExportMarkdownToBytes("Hecho \xE2\x9C\x85 listo \xF0\x9F\x9A\x80\n");
+    std::string pdfStr(pdfBytes.begin(), pdfBytes.end());
+    EXPECT_NE(pdfStr.find("(Hecho listo)"), std::string::npos);
+}

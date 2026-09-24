@@ -221,3 +221,98 @@ TEST_F(EditorViewTest, BidirectionalFind) {
     EXPECT_EQ(editor.Call(SCI_GETSELECTIONSTART), 6);
     EXPECT_EQ(editor.Call(SCI_GETSELECTIONEND), 10);
 }
+
+TEST_F(EditorViewTest, FormattingTogglesOff) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1008, 0, 0, 800, 600));
+
+    // Ctrl+B twice on the same selection restores the original text.
+    editor.SetText("Hello world");
+    editor.Call(SCI_SETSEL, 0, 5);
+    editor.InsertBold();
+    EXPECT_EQ(editor.GetText(), "**Hello** world");
+    editor.InsertBold();
+    EXPECT_EQ(editor.GetText(), "Hello world");
+
+    // Selecting the markers too also unwraps.
+    editor.SetText("**Hello** world");
+    editor.Call(SCI_SETSEL, 0, 9);
+    editor.InsertBold();
+    EXPECT_EQ(editor.GetText(), "Hello world");
+
+    // Italic must not eat one star of a bold span.
+    editor.SetText("**Hello**");
+    editor.Call(SCI_SETSEL, 0, 9);
+    editor.InsertItalic();
+    EXPECT_EQ(editor.GetText(), "***Hello***");
+
+    // Empty markers are removed by a second press.
+    editor.SetText("");
+    editor.InsertBold();
+    editor.InsertBold();
+    EXPECT_EQ(editor.GetText(), "");
+}
+
+TEST_F(EditorViewTest, CodeFenceKeepsSelectionLineEndings) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1009, 0, 0, 800, 600));
+
+    editor.SetText("a\r\nb");
+    editor.Call(SCI_SETSEL, 0, 4);
+    editor.InsertCode();
+    EXPECT_EQ(editor.GetText(), "```\r\na\r\nb\r\n```");
+}
+
+TEST_F(EditorViewTest, InsertLinkUsesSelectedUrlAsTarget) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1010, 0, 0, 800, 600));
+
+    editor.SetText("https://example.com");
+    editor.Call(SCI_SETSEL, 0, 19);
+    editor.InsertLink();
+    EXPECT_EQ(editor.GetText(), "[](https://example.com)");
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), 1); // Caret ready to type the label
+}
+
+TEST_F(EditorViewTest, StatsCountCharactersNotBytes) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1011, 0, 0, 800, 600));
+
+    editor.SetText("Año ñandú 🚀");
+    auto stats = editor.GetDocumentStats();
+    EXPECT_EQ(stats.words, 3u);
+    EXPECT_EQ(stats.characters, 11u);
+}
+
+TEST_F(EditorViewTest, SetTextHandlesNonTerminatedViews) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1012, 0, 0, 800, 600));
+
+    const std::string buffer = "Primera línea\nSegunda línea";
+    editor.SetText(std::string_view(buffer).substr(0, 5)); // Not NUL-terminated at 5
+    EXPECT_EQ(editor.GetText(), "Prime");
+    EXPECT_FALSE(editor.CanUndo());
+}
+
+TEST_F(EditorViewTest, SelectionMatchesIgnoresCaseOnRequest) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1013, 0, 0, 800, 600));
+
+    editor.SetText("Árbol verde");
+    editor.Call(SCI_SETSEL, 0, 6); // "Árbol" (Á is two bytes)
+    EXPECT_TRUE(editor.SelectionMatches("árbol", false));
+    EXPECT_FALSE(editor.SelectionMatches("árbol", true));
+    EXPECT_FALSE(editor.SelectionMatches("verde", false));
+}

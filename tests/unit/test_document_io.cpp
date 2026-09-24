@@ -162,3 +162,64 @@ TEST_F(DocumentIoTest, AtomicSaveOverwritesSafely) {
         EXPECT_NE(ext, ".tmp");
     }
 }
+
+TEST_F(DocumentIoTest, MissingFileThrowsInsteadOfReturningEmptyDocument) {
+    // An empty result would let the user "save" over a file that could not be read.
+    EXPECT_THROW(Pluma::IO::ReadDocument(tempDir / "no_existe.md"), std::runtime_error);
+}
+
+TEST_F(DocumentIoTest, EmptyFileIsAValidEmptyDocument) {
+    fs::path testFile = tempDir / "empty.md";
+    WriteBinaryFile(testFile, {});
+    auto doc = Pluma::IO::ReadDocument(testFile);
+    EXPECT_TRUE(doc.contentUtf8.empty());
+    EXPECT_EQ(doc.encoding, Pluma::IO::Encoding::Utf8);
+}
+
+TEST_F(DocumentIoTest, FileOpenedForWritingElsewhereCanBeRead) {
+    fs::path testFile = tempDir / "locked.md";
+    WriteBinaryFile(testFile, {'#', ' ', 'H', 'i'});
+    HANDLE writer = CreateFileW(testFile.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(writer, INVALID_HANDLE_VALUE);
+    auto doc = Pluma::IO::ReadDocument(testFile);
+    CloseHandle(writer);
+    EXPECT_EQ(doc.contentUtf8, "# Hi");
+}
+
+TEST_F(DocumentIoTest, AnsiFallbackRoundTrip) {
+    fs::path testFile = tempDir / "ansi.md";
+    // "Año ñandú €" in Windows-1252 plus bytes undefined in that code page.
+    std::vector<uint8_t> original = {'A', 0xF1, 'o', ' ', 0xF1, 'a', 'n', 'd', 0xFA, ' ', 0x80, '\r', '\n', 0x81, 0x8D};
+    WriteBinaryFile(testFile, original);
+
+    auto doc = Pluma::IO::ReadDocument(testFile);
+    EXPECT_EQ(doc.encoding, Pluma::IO::Encoding::Ansi);
+    EXPECT_EQ(doc.contentUtf8.substr(0, 16), "Año ñandú €");
+
+    fs::path outFile = tempDir / "ansi_out.md";
+    Pluma::IO::WriteDocumentAtomic(outFile, doc.contentUtf8, doc.encoding, doc.lineEnding);
+    EXPECT_EQ(ReadBinaryFile(outFile), original);
+}
+
+TEST_F(DocumentIoTest, Utf8Validation) {
+    EXPECT_TRUE(Pluma::IO::IsValidUtf8("Año 🚀"));
+    EXPECT_FALSE(Pluma::IO::IsValidUtf8("A\xF1o"));
+    EXPECT_FALSE(Pluma::IO::IsValidUtf8("\xC0\xAF"));      // Overlong
+    EXPECT_FALSE(Pluma::IO::IsValidUtf8("\xED\xA0\x80"));  // Surrogate
+    EXPECT_FALSE(Pluma::IO::IsValidUtf8("\xE2\x82"));      // Truncated
+}
+
+TEST_F(DocumentIoTest, DetectsCharactersAnsiCannotStore) {
+    fs::path testFile = tempDir / "ansi_check.md";
+    WriteBinaryFile(testFile, {'A', 0xF1, 'o', ' ', 0x80, 0x81, 0x8D});
+    auto doc = Pluma::IO::ReadDocument(testFile);
+    ASSERT_EQ(doc.encoding, Pluma::IO::Encoding::Ansi);
+
+    // Everything read from an ANSI file can be written back.
+    EXPECT_TRUE(Pluma::IO::CanEncodeLosslessly(doc.contentUtf8, Pluma::IO::Encoding::Ansi));
+    // An emoji or Cyrillic text typed afterwards cannot.
+    EXPECT_FALSE(Pluma::IO::CanEncodeLosslessly(doc.contentUtf8 + "🚀", Pluma::IO::Encoding::Ansi));
+    EXPECT_FALSE(Pluma::IO::CanEncodeLosslessly("Привет", Pluma::IO::Encoding::Ansi));
+    EXPECT_TRUE(Pluma::IO::CanEncodeLosslessly("Привет", Pluma::IO::Encoding::Utf8));
+}

@@ -1,6 +1,9 @@
 #include "html_exporter.h"
 #include "../io/document_io.h"
+#include "../markdown/emoji.h"
+#include "../markdown/slug.h"
 #include <md4c-html.h>
+#include <map>
 #include <sstream>
 
 namespace Pluma::Export {
@@ -26,6 +29,118 @@ std::string EscapeHtml(std::string_view text) {
         }
     }
     return result;
+}
+
+// Plain text of an HTML fragment: tags removed, the basic entities md4c emits decoded.
+std::string HtmlToPlainText(std::string_view html) {
+    std::string text;
+    bool inTag = false;
+    for (size_t i = 0; i < html.size(); ++i) {
+        const char c = html[i];
+        if (inTag) {
+            inTag = (c != '>');
+            continue;
+        }
+        if (c == '<') {
+            inTag = true;
+            continue;
+        }
+        if (c == '&') {
+            static constexpr std::pair<std::string_view, char> kEntities[] = {
+                {"&amp;", '&'}, {"&lt;", '<'}, {"&gt;", '>'}, {"&quot;", '"'}, {"&#39;", '\''}};
+            bool decoded = false;
+            for (const auto& [entity, ch] : kEntities) {
+                if (html.compare(i, entity.size(), entity) == 0) {
+                    text.push_back(ch);
+                    i += entity.size() - 1;
+                    decoded = true;
+                    break;
+                }
+            }
+            if (decoded) continue;
+        }
+        text.push_back(c);
+    }
+    return text;
+}
+
+// Adds GitHub-compatible id="" anchors to headings (so "#section" links work) and
+// expands :emoji: shortcodes outside <pre>/<code>, matching the in-app preview.
+std::string PostProcessBody(const std::string& body) {
+    std::string out;
+    out.reserve(body.size() + body.size() / 16);
+    std::map<std::string, int> slugCounts;
+    int codeDepth = 0;
+    size_t copied = 0; // body[0, copied) is already in `out`; untouched spans are copied in bulk
+
+    auto flushTo = [&](size_t pos) {
+        out.append(body, copied, pos - copied);
+        copied = pos;
+    };
+    auto processText = [&](size_t begin, size_t end) {
+        if (codeDepth > 0 || begin >= end) return;
+        const std::string_view text(body.data() + begin, end - begin);
+        if (text.find(':') == std::string_view::npos) return;
+        std::string replaced = Markdown::ReplaceEmojiShortcodes(text);
+        if (replaced.size() == text.size() && replaced == text) return;
+        flushTo(begin);
+        out += replaced;
+        copied = end;
+    };
+
+    size_t i = 0;
+    while (i < body.size()) {
+        const size_t lt = body.find('<', i);
+        if (lt == std::string::npos) {
+            processText(i, body.size());
+            break;
+        }
+        processText(i, lt);
+
+        const size_t tagEnd = body.find('>', lt);
+        if (tagEnd == std::string::npos) {
+            break;
+        }
+        const std::string_view tag(body.data() + lt, tagEnd - lt + 1);
+        i = tagEnd + 1;
+
+        if (tag.starts_with("<pre") || tag.starts_with("<code")) {
+            ++codeDepth;
+            continue;
+        }
+        if (tag.starts_with("</pre") || tag.starts_with("</code")) {
+            if (codeDepth > 0) --codeDepth;
+            continue;
+        }
+
+        const bool isHeadingOpen = tag.size() == 4 && tag[1] == 'h' && tag[2] >= '1' && tag[2] <= '6';
+        if (!isHeadingOpen) {
+            continue;
+        }
+        const char closeTag[] = {'<', '/', 'h', tag[2], '>', '\0'};
+        const size_t close = body.find(closeTag, tagEnd);
+        if (close == std::string::npos) {
+            continue;
+        }
+        std::string slug = Markdown::Slugify(Markdown::ReplaceEmojiShortcodes(
+            HtmlToPlainText(std::string_view(body).substr(tagEnd + 1, close - tagEnd - 1))));
+        if (slug.empty()) {
+            continue;
+        }
+        const int seen = slugCounts[slug]++;
+        if (seen > 0) {
+            slug += "-" + std::to_string(seen);
+        }
+        flushTo(lt);
+        out += "<h";
+        out += tag[2];
+        out += " id=\"";
+        out += slug;
+        out += "\">";
+        copied = tagEnd + 1;
+    }
+    flushTo(body.size());
+    return out;
 }
 
 } // namespace
@@ -134,6 +249,12 @@ h3 { font-size: 1.25em; }
 h4 { font-size: 1em; }
 h5 { font-size: 0.875em; }
 h6 { font-size: 0.85em; color: var(--fg-muted); }
+h1:target, h2:target, h3:target, h4:target, h5:target, h6:target {
+  scroll-margin-top: 16px;
+}
+p, li, td, th {
+  overflow-wrap: break-word;
+}
 p, ul, ol {
   margin-top: 0;
   margin-bottom: 16px;
@@ -143,6 +264,30 @@ ul, ol {
 }
 li + li {
   margin-top: 0.25em;
+}
+ul ul, ul ol, ol ol, ol ul {
+  margin-top: 0.25em;
+  margin-bottom: 0;
+}
+li.task-list-item {
+  list-style-type: none;
+}
+li.task-list-item > input[type="checkbox"] {
+  margin: 0 0.4em 0.2em -1.5em;
+  vertical-align: middle;
+}
+img {
+  max-width: 100%;
+  height: auto;
+}
+kbd {
+  font-family: Consolas, "Cascadia Code", monospace;
+  font-size: 85%;
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--code-border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background-color: var(--code-bg);
 }
 blockquote {
   margin: 0 0 16px;
@@ -173,14 +318,19 @@ pre code {
   border-radius: 0;
 }
 table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
   border-spacing: 0;
   border-collapse: collapse;
-  width: 100%;
   margin-bottom: 16px;
 }
 table th, table td {
   padding: 8px 13px;
   border: 1px solid var(--table-border);
+  overflow-wrap: anywhere;
+  min-width: 3em;
 }
 table th {
   background-color: var(--table-header-bg);
@@ -216,8 +366,16 @@ input[type="checkbox"] {
     padding: 0;
     margin: 0;
   }
-  pre, blockquote, table, tr {
+  pre, blockquote, table, tr, img {
     page-break-inside: avoid;
+  }
+  table {
+    display: table;
+    width: 100%;
+  }
+  pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   h1, h2, h3, h4, h5, h6 {
     page-break-after: avoid;
@@ -232,7 +390,8 @@ std::string HtmlExporter::ExportToString(std::string_view markdown, const HtmlEx
     std::string htmlBody;
     htmlBody.reserve(markdown.size() * 2);
 
-    unsigned parserFlags = MD_DIALECT_GITHUB | MD_FLAG_TASKLISTS;
+    // MD_DIALECT_GITHUB already includes tables, task lists, strikethrough and autolinks.
+    unsigned parserFlags = MD_DIALECT_GITHUB;
     unsigned rendererFlags = 0;
 
     int res = md_html(
@@ -247,13 +406,18 @@ std::string HtmlExporter::ExportToString(std::string_view markdown, const HtmlEx
     if (res != 0) {
         return {};
     }
+    htmlBody = PostProcessBody(htmlBody);
 
     std::ostringstream doc;
     doc << "<!DOCTYPE html>\n";
-    doc << "<html lang=\"en\">\n";
+    doc << "<html lang=\"" << EscapeHtml(options.language) << "\">\n";
     doc << "<head>\n";
     doc << "  <meta charset=\"utf-8\">\n";
     doc << "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
+    doc << "  <meta name=\"generator\" content=\"Pluma\">\n";
+    if (options.theme == HtmlTheme::Auto) {
+        doc << "  <meta name=\"color-scheme\" content=\"light dark\">\n";
+    }
     doc << "  <title>" << EscapeHtml(options.title) << "</title>\n";
 
     if (options.embedStyles) {

@@ -58,6 +58,7 @@ struct Block {
     bool isTask = false;                  // For task list items (GFM)
     bool isTaskChecked = false;           // [x] vs [ ]
     bool isHeaderCell = false;            // For TableCell (TH vs TD)
+    bool isRawHtml = false;               // Paragraph produced from a raw HTML block (tags stripped)
     Alignment align = Alignment::Default; // For TableCell
     std::string info;                     // For CodeBlock language info
     int startLine = 0;                    // Source document line range for sync scroll (F-14)
@@ -81,5 +82,8 @@ struct BlockTree {
     // Dumps tree structure to a deterministic string for unit tests
     std::string DumpToString() const;
 };
+
+// Concatenates the visible text of a span tree (link labels, emphasis, code, image alt text).
+std::string ExtractPlainText(const std::vector<Span>& spans);
 
 } // namespace Pluma::Markdown

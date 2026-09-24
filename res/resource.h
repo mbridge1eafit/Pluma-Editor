@@ -24,6 +24,7 @@
 #define IDM_EDIT_REPLACE                40017
 #define IDM_EDIT_GOTO                   40018
 #define IDM_EDIT_WRAP                   40019
+#define IDM_EDIT_SELECTALL              40020
 
 #define IDM_VIEW_EDITOR_ONLY            40031
 #define IDM_VIEW_SPLIT                  40032

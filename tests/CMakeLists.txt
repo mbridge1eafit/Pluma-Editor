@@ -31,12 +31,18 @@ set(UNIT_TEST_SOURCES
     ../src/editor/editor_view.cpp
     ../src/editor/editor_view.h
     ../src/markdown/block_tree.cpp
+    ../src/markdown/slug.cpp
+    ../src/markdown/slug.h
+    ../src/markdown/emoji.cpp
+    ../src/markdown/emoji.h
     ../src/markdown/block_tree.h
     ../src/markdown/md4c_adapter.cpp
     ../src/markdown/md4c_adapter.h
     ../src/markdown/parse_worker.cpp
     ../src/markdown/parse_worker.h
     ../src/preview/preview_layout.cpp
+    ../src/preview/preview_renderer.cpp
+    ../src/preview/preview_renderer.h
     ../src/preview/preview_layout.h
     ../src/preview/preview_view.cpp
     ../src/preview/preview_view.h
