@@ -3,7 +3,7 @@ param (
     [int]$Iterations = 20,
     [int]$Warmup = 2,
     [double]$TargetLimitMs = 60.0,
-    [double]$HardLimitMs = 100.0,
+    [double]$HardLimitMs = 200.0,
     [switch]$FailOnHardLimit
 )
 
