@@ -84,7 +84,13 @@ EditorView::EditorView(EditorView&& other) noexcept
       m_fnDirect(other.m_fnDirect),
       m_ptrDirect(other.m_ptrDirect),
       m_isDarkMode(other.m_isDarkMode),
-      m_wordWrap(other.m_wordWrap) {
+      m_wordWrap(other.m_wordWrap),
+      m_showLineNumbers(other.m_showLineNumbers),
+      m_highlightCurrentLine(other.m_highlightCurrentLine),
+      m_tabWidth(other.m_tabWidth),
+      m_useTabs(other.m_useTabs),
+      m_fontName(std::move(other.m_fontName)),
+      m_fontSize(other.m_fontSize) {
     other.m_hwndScintilla = nullptr;
     other.m_fnDirect = nullptr;
     other.m_ptrDirect = 0;
@@ -100,6 +106,12 @@ EditorView& EditorView::operator=(EditorView&& other) noexcept {
         m_ptrDirect = other.m_ptrDirect;
         m_isDarkMode = other.m_isDarkMode;
         m_wordWrap = other.m_wordWrap;
+        m_showLineNumbers = other.m_showLineNumbers;
+        m_highlightCurrentLine = other.m_highlightCurrentLine;
+        m_tabWidth = other.m_tabWidth;
+        m_useTabs = other.m_useTabs;
+        m_fontName = std::move(other.m_fontName);
+        m_fontSize = other.m_fontSize;
 
         other.m_hwndScintilla = nullptr;
         other.m_fnDirect = nullptr;
@@ -165,9 +177,9 @@ bool EditorView::Create(HWND parent, HINSTANCE hInstance, int controlId,
     // Margin 1: Symbol margin (none for now)
     Call(SCI_SETMARGINWIDTHN, 1, 0);
 
-    // Tab size: 4 spaces
-    Call(SCI_SETTABWIDTH, 4);
-    Call(SCI_SETUSETABS, false);
+    // Tab size (default: 4 spaces)
+    Call(SCI_SETTABWIDTH, m_tabWidth);
+    Call(SCI_SETUSETABS, m_useTabs);
 
     // Attach Lexilla Markdown lexer (M1.3, F-05)
     Call(SCI_SETILEXER, 0, reinterpret_cast<sptr_t>(lmMarkdown.Create()));
@@ -419,8 +431,8 @@ void EditorView::ApplyTheme(bool darkMode) {
 }
 
 void EditorView::SetupStyles(bool darkMode) {
-    const char* fontName = EditorFontName();
-    int fontSize = 11;
+    const char* fontName = m_fontName.empty() ? EditorFontName() : m_fontName.c_str();
+    const int fontSize = m_fontSize;
 
     COLORREF bgColor;
     COLORREF fgColor;
@@ -473,7 +485,7 @@ void EditorView::SetupStyles(bool darkMode) {
     Call(SCI_SETSELBACK, true, selBgColor);
 
     // Active line background highlight
-    Call(SCI_SETCARETLINEVISIBLE, true);
+    Call(SCI_SETCARETLINEVISIBLE, m_highlightCurrentLine);
     Call(SCI_SETCARETLINEVISIBLEALWAYS, true);
     Call(SCI_SETCARETLINEBACK, darkMode ? MakeSciColor(38, 38, 38) : MakeSciColor(245, 245, 245));
 
@@ -671,7 +683,54 @@ EditorView::DocumentStats EditorView::GetDocumentStats() const {
     return stats;
 }
 
+void EditorView::SetFont(std::wstring_view faceName, int sizePoints) {
+    std::string name;
+    if (!faceName.empty() && faceName.size() < LF_FACESIZE) {
+        const std::wstring face(faceName);
+        if (FontExists(face.c_str())) {
+            const int count = WideCharToMultiByte(CP_UTF8, 0, face.data(), static_cast<int>(face.size()),
+                                                  nullptr, 0, nullptr, nullptr);
+            if (count > 0) {
+                name.resize(static_cast<size_t>(count));
+                WideCharToMultiByte(CP_UTF8, 0, face.data(), static_cast<int>(face.size()), name.data(), count,
+                                    nullptr, nullptr);
+            }
+        }
+    }
+    sizePoints = (std::clamp)(sizePoints, 6, 72);
+    if (name == m_fontName && sizePoints == m_fontSize) return;
+    m_fontName = std::move(name);
+    m_fontSize = sizePoints;
+    if (m_hwndScintilla) SetupStyles(m_isDarkMode);
+}
+
+void EditorView::SetShowLineNumbers(bool show) {
+    if (show == m_showLineNumbers) return;
+    m_showLineNumbers = show;
+    m_marginDigits = 0;
+    UpdateLineNumberMargin();
+}
+
+void EditorView::SetHighlightCurrentLine(bool highlight) {
+    m_highlightCurrentLine = highlight;
+    Call(SCI_SETCARETLINEVISIBLE, highlight);
+}
+
+void EditorView::SetTabSettings(int width, bool useTabs) {
+    m_tabWidth = (std::clamp)(width, 1, 16);
+    m_useTabs = useTabs;
+    Call(SCI_SETTABWIDTH, m_tabWidth);
+    Call(SCI_SETUSETABS, m_useTabs);
+}
+
 void EditorView::UpdateLineNumberMargin() {
+    if (!m_showLineNumbers) {
+        if (m_marginDigits != -1) {
+            m_marginDigits = -1;
+            Call(SCI_SETMARGINWIDTHN, 0, 0);
+        }
+        return;
+    }
     auto lines = Call(SCI_GETLINECOUNT);
     int digits = 1;
     while (lines >= 10) {

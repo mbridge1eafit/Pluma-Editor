@@ -32,7 +32,7 @@ Windows Registry Editor Version 5.00
 "FriendlyTypeName"="Documento Markdown"
 
 [HKEY_CURRENT_USER\Software\Classes\Pluma.Markdown\DefaultIcon]
-@="\"D:\\PROYECTOS\\Pluma\\build\\release\\bin\\pluma.exe\",1"
+@="\"D:\\PROYECTOS\\Pluma\\markdown.ico\""
 
 [HKEY_CURRENT_USER\Software\Classes\Pluma.Markdown\shell]
 

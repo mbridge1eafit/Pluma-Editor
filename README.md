@@ -41,6 +41,12 @@ cmake --build --preset asan
 ctest --preset asan --output-on-failure
 ```
 
+## Configuración
+
+- **Preferencias:** `Configuración > Preferencias…` (`Ctrl+,`). Se guardan en `%APPDATA%\Pluma\pluma.ini`; si existe un `pluma.ini` junto a `pluma.exe`, se usa ese archivo (modo portable).
+- **Panel de encabezados:** `Ver > Panel de encabezados` (`Ctrl+Shift+E`). Se redimensiona arrastrando su borde derecho (doble clic restablece el ancho).
+- **Editor predeterminado de Markdown:** `Configuración > Establecer como editor predeterminado de Markdown…` registra Pluma para `.md`, `.markdown` y `.mdown` (sin permisos de administrador) y abre el selector de Windows para confirmar el cambio.
+
 ## Benchmarks de Rendimiento
 
 Para ejecutar la medición automatizada del arranque en frío (NF-01):
