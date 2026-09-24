@@ -84,12 +84,16 @@ public:
         wcex.cbClsExtra = 0;
         wcex.cbWndExtra = 0;
         wcex.hInstance = m_hInstance;
-        wcex.hIcon = LoadIconW(m_hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
+        wcex.hIcon = static_cast<HICON>(LoadImageW(
+            m_hInstance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
+            GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR));
         wcex.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         wcex.hbrBackground = nullptr;
         wcex.lpszMenuName = MAKEINTRESOURCEW(IDR_MAIN_MENU);
         wcex.lpszClassName = kWindowClassName;
-        wcex.hIconSm = nullptr;
+        wcex.hIconSm = static_cast<HICON>(LoadImageW(
+            m_hInstance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
 
         RegisterClassExW(&wcex);
 
@@ -109,6 +113,9 @@ public:
         if (!m_hwnd) {
             return false;
         }
+
+        SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(wcex.hIcon));
+        SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wcex.hIconSm));
 
         // Setup drag and drop (F-01, M1.5)
         DragAcceptFiles(m_hwnd, TRUE);
@@ -560,10 +567,17 @@ public:
                 case WM_CREATE: {
                     auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
                     SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-                    CreateWindowW(L"STATIC", L"Número de línea:", WS_CHILD | WS_VISIBLE, 15, 15, 180, 20, hwnd, nullptr, nullptr, nullptr);
+                    HFONT hFont = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+                    HWND hStatic = CreateWindowW(L"STATIC", L"Número de línea:", WS_CHILD | WS_VISIBLE, 15, 15, 180, 20, hwnd, nullptr, nullptr, nullptr);
                     HWND hEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER, 15, 40, 200, 24, hwnd, reinterpret_cast<HMENU>(101), nullptr, nullptr);
-                    CreateWindowW(L"BUTTON", L"Aceptar", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 35, 75, 75, 26, hwnd, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
-                    CreateWindowW(L"BUTTON", L"Cancelar", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 120, 75, 75, 26, hwnd, reinterpret_cast<HMENU>(IDCANCEL), nullptr, nullptr);
+                    HWND hOk = CreateWindowW(L"BUTTON", L"Aceptar", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 35, 75, 75, 26, hwnd, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
+                    HWND hCancel = CreateWindowW(L"BUTTON", L"Cancelar", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 120, 75, 75, 26, hwnd, reinterpret_cast<HMENU>(IDCANCEL), nullptr, nullptr);
+                    if (hFont) {
+                        SendMessageW(hStatic, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
+                        SendMessageW(hEdit, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
+                        SendMessageW(hOk, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
+                        SendMessageW(hCancel, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
+                    }
                     SetFocus(hEdit);
                     return 0;
                 }

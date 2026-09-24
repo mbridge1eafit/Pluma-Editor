@@ -1,0 +1,42 @@
+Windows Registry Editor Version 5.00
+
+; Asociación de archivos Markdown (.md, .markdown, .mdown) para Pluma
+; Nota: Asegúrese de ajustar las rutas si mueve pluma.exe
+
+[HKEY_CURRENT_USER\Software\Classes\.md]
+@="Pluma.Markdown"
+"Content Type"="text/markdown"
+"PerceivedType"="document"
+
+[HKEY_CURRENT_USER\Software\Classes\.md\OpenWithProgids]
+"Pluma.Markdown"=hex(0):
+
+[HKEY_CURRENT_USER\Software\Classes\.markdown]
+@="Pluma.Markdown"
+"Content Type"="text/markdown"
+"PerceivedType"="document"
+
+[HKEY_CURRENT_USER\Software\Classes\.markdown\OpenWithProgids]
+"Pluma.Markdown"=hex(0):
+
+[HKEY_CURRENT_USER\Software\Classes\.mdown]
+@="Pluma.Markdown"
+"Content Type"="text/markdown"
+"PerceivedType"="document"
+
+[HKEY_CURRENT_USER\Software\Classes\.mdown\OpenWithProgids]
+"Pluma.Markdown"=hex(0):
+
+[HKEY_CURRENT_USER\Software\Classes\Pluma.Markdown]
+@="Documento Markdown"
+"FriendlyTypeName"="Documento Markdown"
+
+[HKEY_CURRENT_USER\Software\Classes\Pluma.Markdown\DefaultIcon]
+@="\"D:\\PROYECTOS\\Pluma\\build\\release\\bin\\pluma.exe\",1"
+
+[HKEY_CURRENT_USER\Software\Classes\Pluma.Markdown\shell]
+
+[HKEY_CURRENT_USER\Software\Classes\Pluma.Markdown\shell\open]
+
+[HKEY_CURRENT_USER\Software\Classes\Pluma.Markdown\shell\open\command]
+@="\"D:\\PROYECTOS\\Pluma\\build\\release\\bin\\pluma.exe\" \"%1\""

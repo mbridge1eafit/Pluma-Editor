@@ -74,6 +74,8 @@ set(PLUMA_SOURCES
     res/pluma.rc
     res/resource.h
     res/pluma.manifest
+    res/icons/app.ico
+    res/icons/doc_md.ico
 )
 
 add_executable(pluma WIN32 ${PLUMA_SOURCES})
