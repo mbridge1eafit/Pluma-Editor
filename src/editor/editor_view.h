@@ -78,9 +78,30 @@ public:
     void GotoLine(int line);
     int GetFirstVisibleDocLine() const;
     void ScrollToDocLine(int docLine);
-    bool FindNext(std::string_view text, bool matchCase, bool wholeWord, bool regex);
+    bool FindNext(std::string_view text, bool matchCase, bool wholeWord, bool regex, bool forward = true);
     int ReplaceAll(std::string_view findText, std::string_view replaceText,
                    bool matchCase, bool wholeWord, bool regex);
+
+    // Markdown formatting helpers (F-12)
+    void WrapSelection(std::string_view prefix, std::string_view suffix);
+    void InsertBold();
+    void InsertItalic();
+    void InsertCode();
+    void InsertStrikethrough();
+    void InsertLink();
+
+    // Editor metrics and status info (F-13)
+    struct CursorPos {
+        int line = 1;
+        int column = 1;
+    };
+    CursorPos GetCursorPosition() const;
+
+    struct DocumentStats {
+        size_t words = 0;
+        size_t characters = 0;
+    };
+    DocumentStats GetDocumentStats() const;
 
     // Markdown lexer styling for Light / Dark mode (M1.3, F-05, F-09)
     void ApplyTheme(bool darkMode);

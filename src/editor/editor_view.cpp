@@ -222,7 +222,7 @@ void EditorView::ScrollToDocLine(int docLine) {
     }
 }
 
-bool EditorView::FindNext(std::string_view text, bool matchCase, bool wholeWord, bool regex) {
+bool EditorView::FindNext(std::string_view text, bool matchCase, bool wholeWord, bool regex, bool forward) {
     if (text.empty()) {
         return false;
     }
@@ -234,27 +234,46 @@ bool EditorView::FindNext(std::string_view text, bool matchCase, bool wholeWord,
 
     Call(SCI_SETSEARCHFLAGS, flags);
 
-    auto currentPos = Call(SCI_GETCURRENTPOS);
     auto docLength = Call(SCI_GETLENGTH);
 
-    // Search forward from current position to end
-    Call(SCI_SETTARGETSTART, currentPos);
-    Call(SCI_SETTARGETEND, docLength);
+    if (forward) {
+        auto selEnd = Call(SCI_GETSELECTIONEND);
+        Call(SCI_SETTARGETSTART, selEnd);
+        Call(SCI_SETTARGETEND, docLength);
 
-    auto pos = Call(SCI_SEARCHINTARGET, text.size(), reinterpret_cast<sptr_t>(text.data()));
-    if (pos == -1 && currentPos > 0) {
-        // Wrap around search from start to current position
-        Call(SCI_SETTARGETSTART, 0);
-        Call(SCI_SETTARGETEND, currentPos);
-        pos = Call(SCI_SEARCHINTARGET, text.size(), reinterpret_cast<sptr_t>(text.data()));
-    }
+        auto pos = Call(SCI_SEARCHINTARGET, text.size(), reinterpret_cast<sptr_t>(text.data()));
+        if (pos == -1 && selEnd > 0) {
+            Call(SCI_SETTARGETSTART, 0);
+            Call(SCI_SETTARGETEND, selEnd);
+            pos = Call(SCI_SEARCHINTARGET, text.size(), reinterpret_cast<sptr_t>(text.data()));
+        }
 
-    if (pos != -1) {
-        auto matchStart = Call(SCI_GETTARGETSTART);
-        auto matchEnd = Call(SCI_GETTARGETEND);
-        Call(SCI_SETSEL, matchStart, matchEnd);
-        Call(SCI_SCROLLCARET);
-        return true;
+        if (pos != -1) {
+            auto matchStart = Call(SCI_GETTARGETSTART);
+            auto matchEnd = Call(SCI_GETTARGETEND);
+            Call(SCI_SETSEL, matchStart, matchEnd);
+            Call(SCI_SCROLLCARET);
+            return true;
+        }
+    } else {
+        auto selStart = Call(SCI_GETSELECTIONSTART);
+        Call(SCI_SETTARGETSTART, selStart);
+        Call(SCI_SETTARGETEND, 0);
+
+        auto pos = Call(SCI_SEARCHINTARGET, text.size(), reinterpret_cast<sptr_t>(text.data()));
+        if (pos == -1 && selStart < docLength) {
+            Call(SCI_SETTARGETSTART, docLength);
+            Call(SCI_SETTARGETEND, selStart);
+            pos = Call(SCI_SEARCHINTARGET, text.size(), reinterpret_cast<sptr_t>(text.data()));
+        }
+
+        if (pos != -1) {
+            auto matchStart = Call(SCI_GETTARGETSTART);
+            auto matchEnd = Call(SCI_GETTARGETEND);
+            Call(SCI_SETSEL, matchStart, matchEnd);
+            Call(SCI_SCROLLCARET);
+            return true;
+        }
     }
 
     return false;
@@ -397,6 +416,94 @@ void EditorView::SetupStyles(bool darkMode) {
     // Horizontal rules & strikeouts
     setStyle(SCE_MARKDOWN_HRULE, marginFgColor, bgColor, false, false, false);
     setStyle(SCE_MARKDOWN_STRIKEOUT, marginFgColor, bgColor, false, false, false);
+}
+
+void EditorView::WrapSelection(std::string_view prefix, std::string_view suffix) {
+    sptr_t start = Call(SCI_GETSELECTIONSTART);
+    sptr_t end = Call(SCI_GETSELECTIONEND);
+    if (start != end) {
+        std::string selected(end - start, '\0');
+        Call(SCI_GETSELTEXT, 0, reinterpret_cast<sptr_t>(selected.data()));
+        std::string replacement = std::string(prefix) + selected + std::string(suffix);
+        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(replacement.c_str()));
+        Call(SCI_SETSEL, start + prefix.size(), end + prefix.size());
+    } else {
+        std::string text = std::string(prefix) + std::string(suffix);
+        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(text.c_str()));
+        Call(SCI_SETCURRENTPOS, start + prefix.size());
+        Call(SCI_SETANCHOR, start + prefix.size());
+    }
+}
+
+void EditorView::InsertBold() {
+    WrapSelection("**", "**");
+}
+
+void EditorView::InsertItalic() {
+    WrapSelection("*", "*");
+}
+
+void EditorView::InsertCode() {
+    sptr_t start = Call(SCI_GETSELECTIONSTART);
+    sptr_t end = Call(SCI_GETSELECTIONEND);
+    if (start != end) {
+        std::string selected(end - start, '\0');
+        Call(SCI_GETSELTEXT, 0, reinterpret_cast<sptr_t>(selected.data()));
+        if (selected.find('\n') != std::string::npos) {
+            WrapSelection("```\n", "\n```");
+            return;
+        }
+    }
+    WrapSelection("`", "`");
+}
+
+void EditorView::InsertStrikethrough() {
+    WrapSelection("~~", "~~");
+}
+
+void EditorView::InsertLink() {
+    sptr_t start = Call(SCI_GETSELECTIONSTART);
+    sptr_t end = Call(SCI_GETSELECTIONEND);
+    if (start != end) {
+        std::string selected(end - start, '\0');
+        Call(SCI_GETSELTEXT, 0, reinterpret_cast<sptr_t>(selected.data()));
+        std::string replacement = "[" + selected + "](url)";
+        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(replacement.c_str()));
+        sptr_t urlStart = start + selected.size() + 3;
+        sptr_t urlEnd = urlStart + 3;
+        Call(SCI_SETSEL, urlStart, urlEnd);
+    } else {
+        std::string replacement = "[](url)";
+        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(replacement.c_str()));
+        Call(SCI_SETCURRENTPOS, start + 1);
+        Call(SCI_SETANCHOR, start + 1);
+    }
+}
+
+EditorView::CursorPos EditorView::GetCursorPosition() const {
+    sptr_t pos = Call(SCI_GETCURRENTPOS);
+    sptr_t line = Call(SCI_LINEFROMPOSITION, pos);
+    sptr_t col = Call(SCI_GETCOLUMN, pos);
+    return { static_cast<int>(line) + 1, static_cast<int>(col) + 1 };
+}
+
+EditorView::DocumentStats EditorView::GetDocumentStats() const {
+    std::string text = GetText();
+    DocumentStats stats{};
+    stats.characters = text.size();
+
+    bool inWord = false;
+    for (char c : text) {
+        if (static_cast<unsigned char>(c) > 32) {
+            if (!inWord) {
+                stats.words++;
+                inWord = true;
+            }
+        } else {
+            inWord = false;
+        }
+    }
+    return stats;
 }
 
 void EditorView::UpdateLineNumberMargin() {
