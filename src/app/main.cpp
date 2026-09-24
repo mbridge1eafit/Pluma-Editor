@@ -17,6 +17,9 @@
 #include "../editor/editor_view.h"
 #include "../markdown/parse_worker.h"
 #include "../preview/preview_view.h"
+#include "../sync/sync_scroll.h"
+#include "../export/html_exporter.h"
+#include "../export/pdf_exporter.h"
 #include "../../res/resource.h"
 
 namespace {
@@ -181,6 +184,101 @@ public:
         }
         pFileSave->Release();
         return false;
+    }
+
+    void ExportHtml() {
+        IFileSaveDialog* pFileSave = nullptr;
+        HRESULT hr = CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_ALL,
+                                      IID_IFileSaveDialog, reinterpret_cast<void**>(&pFileSave));
+        if (FAILED(hr)) return;
+
+        COMDLG_FILTERSPEC filterSpec[] = {
+            { L"Documento HTML (*.html;*.htm)", L"*.html;*.htm" },
+            { L"Todos los archivos (*.*)", L"*.*" }
+        };
+        pFileSave->SetFileTypes(2, filterSpec);
+        pFileSave->SetDefaultExtension(L"html");
+
+        if (!m_currentPath.empty()) {
+            auto htmlName = m_currentPath.stem().wstring() + L".html";
+            pFileSave->SetFileName(htmlName.c_str());
+        } else {
+            pFileSave->SetFileName(L"documento.html");
+        }
+
+        hr = pFileSave->Show(m_hwnd);
+        if (SUCCEEDED(hr)) {
+            IShellItem* pItem = nullptr;
+            hr = pFileSave->GetResult(&pItem);
+            if (SUCCEEDED(hr)) {
+                PWSTR pszFilePath = nullptr;
+                hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                if (SUCCEEDED(hr)) {
+                    std::filesystem::path outPath(pszFilePath);
+                    CoTaskMemFree(pszFilePath);
+
+                    Pluma::Export::HtmlExportOptions options;
+                    options.title = m_currentPath.empty() ? "Pluma Document" : m_currentPath.stem().string();
+                    options.theme = Pluma::Export::HtmlTheme::Auto;
+
+                    std::string markdown = m_editor.GetText();
+                    bool success = Pluma::Export::HtmlExporter::ExportToFile(outPath, markdown, options);
+                    if (!success) {
+                        MessageBoxW(m_hwnd, L"Error al exportar el archivo HTML.", L"Error", MB_OK | MB_ICONERROR);
+                    }
+                }
+                pItem->Release();
+            }
+        }
+        pFileSave->Release();
+    }
+
+    void ExportPdf() {
+        IFileSaveDialog* pFileSave = nullptr;
+        HRESULT hr = CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_ALL,
+                                      IID_IFileSaveDialog, reinterpret_cast<void**>(&pFileSave));
+        if (FAILED(hr)) return;
+
+        COMDLG_FILTERSPEC filterSpec[] = {
+            { L"Documento PDF (*.pdf)", L"*.pdf" },
+            { L"Todos los archivos (*.*)", L"*.*" }
+        };
+        pFileSave->SetFileTypes(2, filterSpec);
+        pFileSave->SetDefaultExtension(L"pdf");
+
+        if (!m_currentPath.empty()) {
+            auto pdfName = m_currentPath.stem().wstring() + L".pdf";
+            pFileSave->SetFileName(pdfName.c_str());
+        } else {
+            pFileSave->SetFileName(L"documento.pdf");
+        }
+
+        hr = pFileSave->Show(m_hwnd);
+        if (SUCCEEDED(hr)) {
+            IShellItem* pItem = nullptr;
+            hr = pFileSave->GetResult(&pItem);
+            if (SUCCEEDED(hr)) {
+                PWSTR pszFilePath = nullptr;
+                hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                if (SUCCEEDED(hr)) {
+                    std::filesystem::path outPath(pszFilePath);
+                    CoTaskMemFree(pszFilePath);
+
+                    Pluma::Export::PdfExportOptions options;
+                    options.title = m_currentPath.empty() ? "Pluma Document" : m_currentPath.stem().string();
+                    options.pageSize = Pluma::Export::PageSize::A4;
+                    options.marginMm = 20.0f;
+
+                    std::string markdown = m_editor.GetText();
+                    bool success = Pluma::Export::PdfExporter::ExportMarkdownToFile(outPath, markdown, options);
+                    if (!success) {
+                        MessageBoxW(m_hwnd, L"Error al exportar el archivo PDF.", L"Error", MB_OK | MB_ICONERROR);
+                    }
+                }
+                pItem->Release();
+            }
+        }
+        pFileSave->Release();
     }
 
     void ShowOpenDialog() {
@@ -352,6 +450,7 @@ private:
             m_preview.Create(m_hwnd, m_hInstance, width / 2, 0, width / 2, height);
             m_preview.SetDarkMode(darkMode);
 
+            m_syncScroll = std::make_unique<Pluma::Sync::SyncScrollController>(&m_editor, &m_preview);
             m_parseWorker = std::make_unique<Pluma::Markdown::ParseWorker>(m_hwnd, Pluma::Markdown::WM_USER_PARSE_COMPLETE);
 
             RelayoutChildren();
@@ -395,6 +494,12 @@ private:
                 } else if (scn->nmhdr.code == SCN_MODIFIED) {
                     if (scn->modificationType & (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT)) {
                         TriggerParse();
+                    }
+                } else if (scn->nmhdr.code == SCN_UPDATEUI) {
+                    if (scn->updated & SC_UPDATE_V_SCROLL) {
+                        if (m_syncScroll && m_viewMode == ViewMode::Split) {
+                            m_syncScroll->OnEditorScrolled();
+                        }
                     }
                 }
             }
@@ -541,6 +646,12 @@ private:
             case IDM_FILE_SAVEAS:
                 SaveAsFile();
                 return 0;
+            case IDM_FILE_EXPORT_HTML:
+                ExportHtml();
+                return 0;
+            case IDM_FILE_EXPORT_PDF:
+                ExportPdf();
+                return 0;
             case IDM_FILE_EXIT:
                 SendMessageW(m_hwnd, WM_CLOSE, 0, 0);
                 return 0;
@@ -566,14 +677,17 @@ private:
 
             case IDM_VIEW_EDITOR_ONLY:
                 m_viewMode = ViewMode::EditorOnly;
+                if (m_syncScroll) m_syncScroll->SetEnabled(false);
                 RelayoutChildren();
                 return 0;
             case IDM_VIEW_SPLIT:
                 m_viewMode = ViewMode::Split;
+                if (m_syncScroll) m_syncScroll->SetEnabled(true);
                 RelayoutChildren();
                 return 0;
             case IDM_VIEW_PREVIEW_ONLY:
                 m_viewMode = ViewMode::PreviewOnly;
+                if (m_syncScroll) m_syncScroll->SetEnabled(false);
                 RelayoutChildren();
                 return 0;
 
@@ -612,6 +726,7 @@ private:
     HINSTANCE m_hInstance = nullptr;
     Pluma::Editor::EditorView m_editor;
     Pluma::Preview::PreviewView m_preview;
+    std::unique_ptr<Pluma::Sync::SyncScrollController> m_syncScroll;
     std::unique_ptr<Pluma::Markdown::ParseWorker> m_parseWorker;
 
     uint64_t m_docVersion = 0;

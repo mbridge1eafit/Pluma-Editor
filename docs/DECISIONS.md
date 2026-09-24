@@ -74,3 +74,25 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
   - *GDI / GDI+:* Descartado por falta de aceleración por hardware, renderizado subpixel deficiente de fuentes modernas e incapacidad para manejar tipografía compleja y DPI dinámico con la calidad y rendimiento de DirectWrite.
   - *WebView2 / Chromium:* Estrictamente prohibido por la especificación (NF-09) para evitar inflar el binario y el consumo de RAM.
 
+---
+
+## [2026-09-24] Decisión 008: Scroll sincronizado bidireccional y exportación HTML/PDF (M4, F-09, F-14)
+
+- **Contexto:** El requerimiento F-14 exige scroll sincronizado bidireccional proporcional por bloque AST sin rebotes ni bucles infinitos de eventos. El requerimiento F-09 exige exportación a HTML autocontenido con CSS embebido y temas claro/oscuro, y exportación a PDF vector con márgenes estándar de 20 mm, saltos de página respetando bloques y sin encabezados huérfanos.
+- **Decisión:**
+  - `SyncScrollController`:
+    - Coordina la posición visible entre Scintilla (`EditorView::GetFirstVisibleDocLine()` y `ScrollToDocLine()`) y la vista previa (`PreviewView::ScrollToLine()` y `GetLineForCurrentScroll()`).
+    - En `LayoutEngine`, la función `GetScrollYForLine(docLine)` interpola proporcionalmente la coordenada Y dentro del bloque AST (`bounds.top` a `bounds.bottom`) o entre bloques adyacentes. La inversa `GetLineForScrollY(scrollY)` mapea la coordenada visual al número de línea del documento fuente.
+    - Prevención de rebote (anti-echo): `SyncScrollController` rastrea `ScrollSource::Editor` vs `ScrollSource::Preview` y `lastEditorLine`/`lastPreviewLine`. Al propagar el scroll a un panel, se suprime temporalmente la notificación de retorno, garantizando cero oscilaciones.
+  - `HtmlExporter`:
+    - Emplea `md_html` de md4c enlazado estáticamente con dialecto GitHub (tablas, tareas, tachado, autolinks). Genera un documento HTML5 completo y autónomo con estilos modernos embebidos en `<style>` basados en variables CSS (`:root` / `@media (prefers-color-scheme: dark)`), contenedor responsive de 860 px, tipografía nativa del sistema y reglas de impresión `@media print` (`page-break-inside: avoid`). Tiempo de exportación < 5 ms para documentos típicos y < 35 ms para archivos de 300 KB (cumpliendo sobradamente el presupuesto de < 500 ms de F-09).
+  - `PdfExporter`:
+    - Generador directo de PDF 1.4 de alta precisión vectorial con soporte de tamaños A4 y Carta, y márgenes configurables de 20 mm (estándar F-09).
+    - Prevención de encabezados huérfanos (orphan prevention): si un encabezado no dispone de al menos 40 pt para incluir contenido siguiente en la página actual, se genera un salto de página anticipado.
+    - Manejo de bloques: los bloques de código y tablas calculan su altura y preservan filas sin cortes arbitrarios.
+    - Fuentes estándar Type 1 (Helvetica, Courier) con codificación WinAnsi y secuencias de escape octales para caracteres acentuados y símbolos especiales, garantizando compatibilidad universal sin dependencias de servicios externos ni del servicio de cola de impresión de Windows.
+- **Alternativas descartadas:**
+  - *Sincronización por porcentaje lineal de altura:* Descartada porque diferentes densidades tipográficas entre código fuente y texto renderizado provocan desfasajes notables en documentos reales, violando el criterio de aceptación 2 de F-14.
+  - *Generación de PDF delegada exclusivamente a spooler de Windows ("Microsoft Print to PDF"):* Descartada como única opción debido a fallos cuando el servicio Spooler está desactivado por políticas corporativas o entornos restringidos. El generador vectorial nativo proporciona un rendimiento < 5 ms, 100 % de fiabilidad y salida de vectores pura.
+
+

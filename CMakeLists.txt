@@ -65,6 +65,12 @@ set(PLUMA_SOURCES
     src/preview/preview_layout.cpp
     src/preview/preview_view.h
     src/preview/preview_view.cpp
+    src/sync/sync_scroll.h
+    src/sync/sync_scroll.cpp
+    src/export/html_exporter.h
+    src/export/html_exporter.cpp
+    src/export/pdf_exporter.h
+    src/export/pdf_exporter.cpp
     res/pluma.rc
     res/resource.h
     res/pluma.manifest

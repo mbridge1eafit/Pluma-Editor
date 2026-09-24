@@ -1,0 +1,97 @@
+#include <gtest/gtest.h>
+#include "export/html_exporter.h"
+#include <chrono>
+#include <filesystem>
+
+using namespace Pluma::Export;
+
+TEST(HtmlExporterTest, StandaloneStructureAndTags) {
+    std::string markdown =
+        "# Main Title\n\n"
+        "A paragraph with **bold** and *italic* text, and `inline code`.\n\n"
+        "[Link to test](https://example.com)\n";
+
+    HtmlExportOptions options;
+    options.title = "Test Doc";
+    options.theme = HtmlTheme::Auto;
+
+    std::string html = HtmlExporter::ExportToString(markdown, options);
+
+    EXPECT_NE(html.find("<!DOCTYPE html>"), std::string::npos);
+    EXPECT_NE(html.find("<title>Test Doc</title>"), std::string::npos);
+    EXPECT_NE(html.find("<style>"), std::string::npos);
+    EXPECT_NE(html.find("<h1>Main Title</h1>"), std::string::npos);
+    EXPECT_NE(html.find("<strong>bold</strong>"), std::string::npos);
+    EXPECT_NE(html.find("<em>italic</em>"), std::string::npos);
+    EXPECT_NE(html.find("<code>inline code</code>"), std::string::npos);
+    EXPECT_NE(html.find("<a href=\"https://example.com\">Link to test</a>"), std::string::npos);
+    EXPECT_NE(html.find("</html>"), std::string::npos);
+}
+
+TEST(HtmlExporterTest, GfmExtensionsTablesAndTasks) {
+    std::string markdown =
+        "| Name | Age |\n"
+        "| :--- | --: |\n"
+        "| Alice | 30 |\n\n"
+        "- [x] Completed task\n"
+        "- [ ] Incomplete task\n";
+
+    std::string html = HtmlExporter::ExportToString(markdown);
+
+    EXPECT_NE(html.find("<table>"), std::string::npos);
+    EXPECT_NE(html.find("Name</th>"), std::string::npos);
+    EXPECT_NE(html.find("Alice</td>"), std::string::npos);
+    EXPECT_NE(html.find("type=\"checkbox\""), std::string::npos);
+    EXPECT_NE(html.find("checked"), std::string::npos);
+}
+
+TEST(HtmlExporterTest, ThemeVariants) {
+    std::string markdown = "# Hello";
+
+    HtmlExportOptions lightOpt;
+    lightOpt.theme = HtmlTheme::Light;
+    std::string lightHtml = HtmlExporter::ExportToString(markdown, lightOpt);
+    EXPECT_NE(lightHtml.find("--bg: #ffffff;"), std::string::npos);
+
+    HtmlExportOptions darkOpt;
+    darkOpt.theme = HtmlTheme::Dark;
+    std::string darkHtml = HtmlExporter::ExportToString(markdown, darkOpt);
+    EXPECT_NE(darkHtml.find("--bg: #1e1e1e;"), std::string::npos);
+
+    HtmlExportOptions autoOpt;
+    autoOpt.theme = HtmlTheme::Auto;
+    std::string autoHtml = HtmlExporter::ExportToString(markdown, autoOpt);
+    EXPECT_NE(autoHtml.find("@media (prefers-color-scheme: dark)"), std::string::npos);
+}
+
+TEST(HtmlExporterTest, ExportToFileAndRoundTrip) {
+    std::string markdown = "# Export Test\n\nContent for file export test.";
+    auto tempFile = std::filesystem::temp_directory_path() / "pluma_test_export.html";
+
+    EXPECT_TRUE(HtmlExporter::ExportToFile(tempFile, markdown));
+    EXPECT_TRUE(std::filesystem::exists(tempFile));
+    EXPECT_GT(std::filesystem::file_size(tempFile), 100u);
+
+    std::filesystem::remove(tempFile);
+}
+
+TEST(HtmlExporterTest, HighPerformanceLargeDocument) {
+    // Generate a ~300 KB markdown document
+    std::string largeMd;
+    largeMd.reserve(300 * 1024);
+    for (int i = 0; i < 2000; ++i) {
+        largeMd += "## Section " + std::to_string(i) + "\n\n";
+        largeMd += "This is a detailed paragraph with **bold formatting**, *italics*, and `code`.\n\n";
+        largeMd += "| Col A | Col B |\n|---|---|\n| Data 1 | Data 2 |\n\n";
+    }
+
+    auto start = std::chrono::high_resolution_clock::now();
+    std::string html = HtmlExporter::ExportToString(largeMd);
+    auto end = std::chrono::high_resolution_clock::now();
+
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+    EXPECT_FALSE(html.empty());
+    // F-09 requires export in < 500 ms for 1 MB
+    EXPECT_LT(ms, 500);
+}
