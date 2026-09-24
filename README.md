@@ -4,17 +4,38 @@ Pluma es un editor de Markdown 100 % nativo para Windows diseñado para abrir en
 
 ## Descargas e Instalación
 
-1. Descarga la versión más reciente (`pluma-vX.X.X-windows-x64.zip`) desde [GitHub Releases](https://github.com/mbridge1eafit/Pluma-Editor/releases).
-2. **Verificar la integridad (Checksum SHA-256):**
-   Compara el hash del archivo descargado con el publicado en `SHA256SUMS.txt`:
-   ```powershell
-   Get-FileHash .\pluma-*-windows-x64.zip -Algorithm SHA256
-   ```
-3. **Desbloquear en Windows:**
-   Al ser un software open-source sin firma comercial de pago, Windows puede marcar el archivo descargado de internet con una advertencia de SmartScreen:
-   - Haz clic derecho sobre el archivo `.zip` descargado ➔ **Propiedades** ➔ marca la casilla **"Desbloquear"** (*Unblock*) ➔ **Aceptar**.
-   - O por PowerShell: `Unblock-File .\pluma-*-windows-x64.zip`
-4. Descomprime y ejecuta `pluma.exe` (es completamente portable y no requiere instalación).
+Descarga la versión más reciente desde [GitHub Releases](https://github.com/mbridge1eafit/Pluma-Editor/releases). Hay dos formatos:
+
+### Instalador (recomendado)
+
+1. Descarga `pluma-vX.X.X-setup-x64.exe` y ejecútalo. No requiere permisos de administrador: se instala para el usuario actual en `%LOCALAPPDATA%\Programs\Pluma`.
+2. En el asistente puedes marcar **«Abrir los archivos Markdown (.md, .markdown, .mdown) con Pluma de forma predeterminada»** y crear un acceso directo en el escritorio. Si otra aplicación ya abría los `.md`, Windows exige confirmarlo en Configuración: la última página del asistente ofrece abrirla.
+3. Para actualizar a mano, ejecuta el instalador de la versión nueva: se instala encima de la anterior y conserva la carpeta, las opciones elegidas y tu configuración.
+4. Se desinstala desde **Configuración > Aplicaciones**; el desinstalador elimina también las asociaciones de archivos.
+
+Al no estar firmado digitalmente, SmartScreen puede mostrar una advertencia al abrir el instalador descargado: pulsa **Más información ➔ Ejecutar de todas formas**.
+
+### Versión portable (ZIP)
+
+1. Descarga `pluma-vX.X.X-windows-x64.zip`.
+2. **Desbloquear en Windows:** clic derecho sobre el `.zip` ➔ **Propiedades** ➔ marca **"Desbloquear"** (*Unblock*) ➔ **Aceptar**, o por PowerShell: `Unblock-File .\pluma-*-windows-x64.zip`.
+3. Descomprime y ejecuta `pluma.exe` (no requiere instalación).
+
+### Verificar la integridad (SHA-256)
+
+Compara el hash del archivo descargado con el publicado en `SHA256SUMS.txt`:
+```powershell
+Get-FileHash .\pluma-*-setup-x64.exe -Algorithm SHA256
+```
+
+## Actualizaciones
+
+Pluma comprueba en segundo plano, como máximo una vez al día, si hay una versión nueva en GitHub Releases (también a demanda en `Ayuda > Buscar actualizaciones…`). Si la hay, muestra las novedades y permite elegir:
+
+- **Actualizar ahora:** descarga el instalador, verifica su SHA-256 con el `SHA256SUMS.txt` publicado, pide guardar el documento, cierra Pluma, instala la versión nueva en modo silencioso y vuelve a abrir Pluma con el mismo documento.
+- **Recordármelo más tarde** u **Omitir esta versión** (no vuelve a avisar de esa versión).
+
+La actualización automática requiere la copia instalada con el instalador; en la versión portable el aviso abre la página de descarga. La comprobación automática se desactiva en `Configuración > Preferencias…`.
 
 ## Requisitos de compilación
 
@@ -40,6 +61,14 @@ ctest --preset release --output-on-failure
 
 El binario resultante se generará en:
 `build/release/bin/pluma.exe`
+
+### Paquetes de distribución (ZIP e instalador)
+
+El instalador se genera con [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install --id JRSoftware.InnoSetup -e`) a partir de `installer/pluma.iss`:
+```powershell
+.\scripts\package_release.ps1            # dist\: ZIP portable, instalador y SHA256SUMS.txt
+```
+La versión se define solo en `project(VERSION)` de `CMakeLists.txt` (y en `res/pluma.manifest`).
 
 ### Compilación en Debug
 ```powershell

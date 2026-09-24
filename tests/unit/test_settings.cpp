@@ -51,6 +51,9 @@ TEST(SettingsTest, RoundTripPreservesEveryValue) {
     s.pdfPageSize = Pluma::Export::PageSize::Letter;
     s.pdfMarginMm = 15;
     s.htmlTheme = Pluma::Export::HtmlTheme::Dark;
+    s.checkForUpdates = false;
+    s.lastUpdateCheck = 4102444800LL; // Beyond 2038: needs 64 bits
+    s.skippedVersion = "v0.3.0";
 
     const Settings r = ParseSettings(SerializeSettings(s));
     EXPECT_EQ(r.theme, s.theme);
@@ -81,7 +84,22 @@ TEST(SettingsTest, RoundTripPreservesEveryValue) {
     EXPECT_EQ(r.pdfPageSize, s.pdfPageSize);
     EXPECT_EQ(r.pdfMarginMm, s.pdfMarginMm);
     EXPECT_EQ(r.htmlTheme, s.htmlTheme);
+    EXPECT_EQ(r.checkForUpdates, s.checkForUpdates);
+    EXPECT_EQ(r.lastUpdateCheck, s.lastUpdateCheck);
+    EXPECT_EQ(r.skippedVersion, s.skippedVersion);
     EXPECT_EQ(r.InitialView(), ViewLayout::PreviewOnly);
+}
+
+TEST(SettingsTest, UpdateDefaultsAndInvalidValues) {
+    const Settings defaults = ParseSettings("");
+    EXPECT_TRUE(defaults.checkForUpdates);
+    EXPECT_EQ(defaults.lastUpdateCheck, 0);
+    EXPECT_TRUE(defaults.skippedVersion.empty());
+
+    const Settings s = ParseSettings("[Updates]\nCheckAutomatically=no\nLastCheck=-5\nSkippedVersion=v1 v2\n");
+    EXPECT_FALSE(s.checkForUpdates);
+    EXPECT_EQ(s.lastUpdateCheck, 0);
+    EXPECT_TRUE(s.skippedVersion.empty());
 }
 
 TEST(SettingsTest, OutOfRangeValuesAreClamped) {

@@ -53,10 +53,17 @@ jobs:
           Write-Host "Releasing version: $tag"
           echo "tag=$tag" >> $env:GITHUB_OUTPUT
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem "${env:ProgramFiles(x86)}/Inno Setup*/ISCC.exe" -ErrorAction SilentlyContinue)) {
+            choco install innosetup --no-progress -y
+          }
+
       - name: Package Release Artifacts
         shell: pwsh
         run: |
-          .\scripts\package_release.ps1 -Version "${{ steps.version.outputs.tag }}"
+          .\scripts\package_release.ps1 -Version "${{ steps.version.outputs.tag }}" -RequireInstaller
 
       # After packaging, so the notes embed the checksums of the published artifacts.
       - name: Generate Release Notes
@@ -76,6 +83,7 @@ jobs:
           body_path: dist/RELEASE_NOTES.md
           files: |
             dist/*.zip
+            dist/*-setup-x64.exe
             dist/SHA256SUMS.txt
           generate_release_notes: false
           draft: false

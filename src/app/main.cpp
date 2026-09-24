@@ -13,6 +13,7 @@
 #include <string_view>
 #include <memory>
 #include <algorithm>
+#include <ctime>
 
 #include "../platform/dpi.h"
 #include "../platform/theme.h"
@@ -27,8 +28,11 @@
 #include "../config/settings.h"
 #include "../outline/outline_panel.h"
 #include "../platform/file_association.h"
+#include "../update/updater.h"
 #include "settings_dialog.h"
+#include "update_ui.h"
 #include "../../res/resource.h"
+#include "pluma_version.h"
 
 namespace {
 
@@ -36,6 +40,10 @@ constexpr wchar_t kWindowClassName[] = L"PlumaMainWindowClass";
 constexpr int kEditorControlId = 1010;
 constexpr int kStatusBarControlId = 1011;
 constexpr UINT WM_APP_REPARSE = WM_APP + 1;     // Coalesces bursts of edits into one parse request
+constexpr UINT WM_APP_UPDATE_CHECKED = WM_APP + 2; // lParam = Pluma::App::UpdateCheckResult*
+constexpr UINT_PTR kUpdateCheckTimerId = 1;
+constexpr UINT kUpdateCheckDelayMs = 4000;      // Automatic check, once the window is idle after startup
+constexpr wchar_t kUserAgent[] = L"Pluma/" PLUMA_VERSION_STRING_W L" (Windows)";
 constexpr UINT kOutlineFirstCommand = 50000;
 constexpr size_t kOutlineMaxItems = 1000;
 UINT g_uFindReplaceMsg = 0;
@@ -161,6 +169,11 @@ public:
             OpenFile(fileToOpen);
         } else {
             UpdateTitle();
+        }
+
+        if (m_settings.checkForUpdates &&
+            Pluma::Update::IsUpdateCheckDue(m_settings.lastUpdateCheck, static_cast<int64_t>(std::time(nullptr)))) {
+            SetTimer(m_hwnd, kUpdateCheckTimerId, kUpdateCheckDelayMs, nullptr);
         }
 
         return true;
@@ -1152,6 +1165,22 @@ private:
             }
             return 0;
 
+        case WM_TIMER:
+            if (wParam == kUpdateCheckTimerId) {
+                KillTimer(m_hwnd, kUpdateCheckTimerId);
+                StartUpdateCheck(false);
+                return 0;
+            }
+            break;
+
+        case WM_APP_UPDATE_CHECKED: {
+            std::unique_ptr<Pluma::App::UpdateCheckResult> result(
+                reinterpret_cast<Pluma::App::UpdateCheckResult*>(lParam));
+            m_updateCheckRunning = false;
+            HandleUpdateCheckResult(*result);
+            return 0;
+        }
+
         case Pluma::Markdown::WM_USER_PARSE_COMPLETE: {
             uint64_t version = static_cast<uint64_t>(wParam);
             auto* rawTree = reinterpret_cast<Pluma::Markdown::BlockTree*>(lParam);
@@ -1409,9 +1438,13 @@ private:
                 SetThemeMode(Pluma::Platform::AppTheme::Light);
                 return 0;
 
+            case IDM_HELP_CHECK_UPDATES:
+                StartUpdateCheck(true);
+                return 0;
+
             case IDM_HELP_ABOUT:
                 MessageBoxW(m_hwnd,
-                            L"Pluma - Editor Markdown nativo para Windows v0.1\n\n"
+                            L"Pluma - Editor Markdown nativo para Windows v" PLUMA_VERSION_STRING_W L"\n\n"
                             L"Desarrollado para velocidad instantánea con Win32, Scintilla y DirectWrite.",
                             L"Acerca de Pluma", MB_OK | MB_ICONINFORMATION);
                 return 0;
@@ -1627,6 +1660,105 @@ private:
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Updates
+
+    void StartUpdateCheck(bool manual) {
+        if (m_updateCheckRunning) return;
+        m_updateCheckRunning = true;
+        Pluma::App::StartUpdateCheck(m_hwnd, WM_APP_UPDATE_CHECKED, manual, kUserAgent);
+    }
+
+    void HandleUpdateCheckResult(const Pluma::App::UpdateCheckResult& result) {
+        if (!result.ok) {
+            // Automatic checks fail silently (offline, rate limit...) and are retried at the next start.
+            if (result.manual) {
+                MessageBoxW(m_hwnd, (L"No se pudo comprobar si hay actualizaciones.\n\n" + result.error).c_str(),
+                            L"Actualización de Pluma", MB_OK | MB_ICONWARNING);
+            }
+            return;
+        }
+
+        const auto current = Pluma::Update::ParseVersion(PLUMA_VERSION_STRING);
+        const Pluma::Update::ReleaseInfo& release = result.release;
+        if (!current ||
+            !Pluma::Update::ShouldOfferUpdate(*current, release, m_settings.skippedVersion, result.manual)) {
+            m_settings.lastUpdateCheck = static_cast<long long>(std::time(nullptr));
+            if (result.manual) {
+                MessageBoxW(m_hwnd,
+                            L"Pluma está actualizado: tiene la versión más reciente (" PLUMA_VERSION_STRING_W L").",
+                            L"Actualización de Pluma", MB_OK | MB_ICONINFORMATION);
+            }
+            return;
+        }
+        // Never interrupt a modal dialog (Preferences, Save As...) with an automatic notice: it is
+        // offered again at the next start.
+        if (!result.manual && !IsWindowEnabled(m_hwnd)) return;
+        m_settings.lastUpdateCheck = static_cast<long long>(std::time(nullptr));
+
+        const bool installed = Pluma::Update::IsInstalledCopy(Pluma::Platform::GetExecutablePath());
+        switch (Pluma::App::ShowUpdateAvailableDialog(m_hwnd, m_hInstance, release, PLUMA_VERSION_STRING_W,
+                                                      installed)) {
+        case Pluma::App::UpdateChoice::Install:
+            InstallUpdate(release);
+            break;
+        case Pluma::App::UpdateChoice::OpenPage:
+            Pluma::App::OpenUrl(m_hwnd, release.pageUrl.empty()
+                                            ? std::wstring(Pluma::Update::kReleasesPageUrl)
+                                            : std::wstring(release.pageUrl.begin(), release.pageUrl.end()));
+            break;
+        case Pluma::App::UpdateChoice::Skip:
+            m_settings.skippedVersion = release.tag;
+            SaveSettingsNow();
+            break;
+        case Pluma::App::UpdateChoice::Later:
+            break;
+        }
+    }
+
+    // True when another Pluma window (another process) is open: the installer cannot replace
+    // pluma.exe while it runs.
+    bool OtherPlumaWindowsOpen() const {
+        for (HWND hwnd = FindWindowExW(nullptr, nullptr, kWindowClassName, nullptr); hwnd;
+             hwnd = FindWindowExW(nullptr, hwnd, kWindowClassName, nullptr)) {
+            if (hwnd != m_hwnd) return true;
+        }
+        return false;
+    }
+
+    void InstallUpdate(const Pluma::Update::ReleaseInfo& release) {
+        std::filesystem::path installer;
+        std::wstring error;
+        if (!Pluma::App::DownloadInstallerWithProgress(m_hwnd, m_hInstance, release, kUserAgent, installer, error)) {
+            if (!error.empty()) {
+                MessageBoxW(m_hwnd,
+                            (L"No se pudo descargar la actualización.\n\n" + error +
+                             L"\n\nPuede intentarlo de nuevo desde Ayuda > Buscar actualizaciones.")
+                                .c_str(),
+                            L"Actualización de Pluma", MB_OK | MB_ICONWARNING);
+            }
+            return;
+        }
+
+        // The installer replaces pluma.exe: the document is saved (or discarded) first.
+        if (!PromptSaveChanges()) return;
+        while (OtherPlumaWindowsOpen()) {
+            const int answer = MessageBoxW(m_hwnd,
+                L"Hay otras ventanas de Pluma abiertas.\n\n"
+                L"Ciérrelas (guardando sus documentos) y pulse Reintentar para instalar la actualización.",
+                L"Actualización de Pluma", MB_RETRYCANCEL | MB_ICONINFORMATION);
+            if (answer != IDRETRY) return;
+        }
+
+        if (!Pluma::Update::LaunchInstaller(installer, m_currentPath, error)) {
+            MessageBoxW(m_hwnd, error.c_str(), L"Actualización de Pluma", MB_OK | MB_ICONERROR);
+            return;
+        }
+        // The installer waits for this process to exit, then relaunches Pluma with the same document.
+        SaveSettingsNow();
+        DestroyWindow(m_hwnd);
+    }
+
     void InvalidateDividers() {
         const Layout layout = ComputeLayout();
         InvalidateRect(m_hwnd, &layout.outlineDivider, FALSE);
@@ -1834,6 +1966,7 @@ private:
     bool m_hasBom = false;
 
     bool m_reparsePosted = false;
+    bool m_updateCheckRunning = false;
     bool m_statsValid = false;
     Pluma::Editor::EditorView::DocumentStats m_cachedStats{};
     std::wstring m_statusTexts[5];
@@ -1867,6 +2000,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPWSTR /*l
 
     g_uFindReplaceMsg = RegisterWindowMessageW(FINDMSGSTRINGW);
 
+    // Held while Pluma runs: the installer waits until no process holds it before replacing pluma.exe.
+    HANDLE appMutex = CreateMutexW(nullptr, FALSE, Pluma::Update::kAppMutexName);
+
     // Check command line arguments for initial file opening (F-01, M1.5)
     std::filesystem::path initialFilePath;
     int argc = 0;
@@ -1880,6 +2016,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPWSTR /*l
 
     MainWindow mainWindow(hInstance);
     if (!mainWindow.Create(nShowCmd, initialFilePath)) {
+        if (appMutex) CloseHandle(appMutex);
         CoUninitialize();
         return 1;
     }
@@ -1898,6 +2035,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPWSTR /*l
         }
     }
 
+    if (appMutex) CloseHandle(appMutex);
     CoUninitialize();
     return static_cast<int>(msg.wParam);
 }

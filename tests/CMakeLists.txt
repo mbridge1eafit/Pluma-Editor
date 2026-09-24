@@ -25,6 +25,7 @@ set(UNIT_TEST_SOURCES
     unit/test_settings.cpp
     unit/test_outline.cpp
     unit/test_mermaid.cpp
+    unit/test_update.cpp
     ../src/config/settings.cpp
     ../src/config/settings.h
     ../src/outline/outline_panel.cpp
@@ -72,6 +73,18 @@ set(UNIT_TEST_SOURCES
     ../src/export/html_exporter.h
     ../src/export/pdf_exporter.cpp
     ../src/export/pdf_exporter.h
+    ../src/update/version.h
+    ../src/update/version.cpp
+    ../src/update/json.h
+    ../src/update/json.cpp
+    ../src/update/release_info.h
+    ../src/update/release_info.cpp
+    ../src/update/sha256.h
+    ../src/update/sha256.cpp
+    ../src/update/http_client.h
+    ../src/update/http_client.cpp
+    ../src/update/updater.h
+    ../src/update/updater.cpp
 )
 
 add_executable(unit_tests ${UNIT_TEST_SOURCES})
@@ -101,6 +114,8 @@ target_link_libraries(unit_tests PRIVATE
     comctl32
     uuid
     windowscodecs
+    winhttp
+    bcrypt
 )
 
 include(GoogleTest)

@@ -21,7 +21,8 @@ constexpr int kHeaderIds[] = {IDC_SET_HEADER_APPEARANCE, IDC_SET_HEADER_EDITOR, 
                               IDC_SET_HEADER_EXPORT, IDC_SET_HEADER_WINDOWS};
 constexpr int kCheckboxIds[] = {IDC_SET_WORDWRAP, IDC_SET_LINENUMBERS, IDC_SET_CURRENTLINE,
                                 IDC_SET_USETABS, IDC_SET_OUTLINE, IDC_SET_STATUSBAR,
-                                IDC_SET_SYNCSCROLL, IDC_SET_REMEMBERWINDOW, IDC_SET_REOPENLAST};
+                                IDC_SET_SYNCSCROLL, IDC_SET_REMEMBERWINDOW, IDC_SET_REOPENLAST,
+                                IDC_SET_CHECKUPDATES};
 constexpr int kComboIds[] = {IDC_SET_THEME, IDC_SET_FONT, IDC_SET_FONTSIZE, IDC_SET_ZOOM,
                              IDC_SET_TABWIDTH, IDC_SET_EOL, IDC_SET_STARTVIEW, IDC_SET_PDFPAGE,
                              IDC_SET_PDFMARGIN, IDC_SET_HTMLTHEME};
@@ -180,6 +181,7 @@ void FillControls(HWND hDlg, const Config::Settings& s) {
     CheckDlgButton(hDlg, IDC_SET_SYNCSCROLL, s.syncScroll ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hDlg, IDC_SET_REMEMBERWINDOW, s.rememberWindow ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hDlg, IDC_SET_REOPENLAST, s.reopenLastFile ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(hDlg, IDC_SET_CHECKUPDATES, s.checkForUpdates ? BST_CHECKED : BST_UNCHECKED);
 }
 
 // Reads the controls into a copy of `base` (runtime-only values are kept).
@@ -221,6 +223,7 @@ Config::Settings ReadControls(HWND hDlg, const Config::Settings& base) {
     s.syncScroll = checked(IDC_SET_SYNCSCROLL);
     s.rememberWindow = checked(IDC_SET_REMEMBERWINDOW);
     s.reopenLastFile = checked(IDC_SET_REOPENLAST);
+    s.checkForUpdates = checked(IDC_SET_CHECKUPDATES);
     s.Sanitize();
     return s;
 }
@@ -434,6 +437,7 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
             defaults.windowHeight = cur.windowHeight;
             defaults.windowMaximized = cur.windowMaximized;
             defaults.lastFile = cur.lastFile;
+            defaults.lastUpdateCheck = cur.lastUpdateCheck;
             FillControls(hDlg, defaults);
             return TRUE;
         }

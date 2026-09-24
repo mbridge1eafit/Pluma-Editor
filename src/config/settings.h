@@ -82,6 +82,11 @@ struct Settings {
     int pdfMarginMm = 20;
     Export::HtmlTheme htmlTheme = Export::HtmlTheme::Auto;
 
+    // Updates
+    bool checkForUpdates = true;      // Automatic check at startup (at most once a day)
+    long long lastUpdateCheck = 0;    // Unix time of the last successful check
+    std::string skippedVersion;       // Release tag the user chose to skip ("v0.3.0")
+
     // The layout to use when a window opens.
     ViewLayout InitialView() const noexcept;
 

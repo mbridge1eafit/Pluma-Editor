@@ -106,7 +106,7 @@ if ($Mode -eq "dry-run") {
     Write-Host "  git tag -a $Version -m ""Release $Version""" -ForegroundColor Gray
     Write-Host "  git push origin $Version" -ForegroundColor Gray
     Write-Host "Para publicar via GitHub CLI ejecuta:"
-    Write-Host "  gh release create $Version dist/pluma-$Version-windows-x64.zip dist/SHA256SUMS.txt -F dist/RELEASE_NOTES.md -t ""Pluma $Version""" -ForegroundColor Gray
+    Write-Host "  gh release create $Version dist/pluma-$Version-windows-x64.zip dist/pluma-$Version-setup-x64.exe dist/SHA256SUMS.txt -F dist/RELEASE_NOTES.md -t ""Pluma $Version""" -ForegroundColor Gray
     return
 }
 
@@ -161,10 +161,17 @@ if ($Mode -eq "github-actions") {
 if ($Mode -eq "gh-cli") {
     Write-Host "`nPublicando directamente con GitHub CLI (gh)..." -ForegroundColor Green
     $zipPath = "dist/pluma-$Version-windows-x64.zip"
+    $setupPath = "dist/pluma-$Version-setup-x64.exe"
     $checksumPath = "dist/SHA256SUMS.txt"
     $notesPath = "dist/RELEASE_NOTES.md"
 
-    & gh release create $Version "$zipPath" "$checksumPath" --title "Pluma $Version" --notes-file "$notesPath"
+    # El actualizador integrado en Pluma necesita el instalador publicado.
+    if (-not (Test-Path $setupPath)) {
+        Write-Error "No se encontró $setupPath. Instale Inno Setup (winget install --id JRSoftware.InnoSetup -e) y vuelva a empaquetar."
+        exit 1
+    }
+
+    & gh release create $Version "$zipPath" "$setupPath" "$checksumPath" --title "Pluma $Version" --notes-file "$notesPath"
     if ($LASTEXITCODE -eq 0) {
         Write-Host "`n[EXITO] Release $Version publicado exitosamente en GitHub!" -ForegroundColor Green
         Test-ReleaseNotesPublished $Version
