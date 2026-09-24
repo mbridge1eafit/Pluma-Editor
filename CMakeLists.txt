@@ -121,6 +121,10 @@ set(PLUMA_SOURCES
 
 # Single source of the version for the code and the resources (res/pluma.rc)
 configure_file(res/version.h.in ${CMAKE_BINARY_DIR}/generated/pluma_version.h @ONLY)
+# Ninja's header scanning of rc.exe output (cmcldeps) misses includes with localized MSVC, which kept a
+# stale version resource after a version bump: declare the dependencies explicitly.
+set_source_files_properties(res/pluma.rc PROPERTIES OBJECT_DEPENDS
+    "${CMAKE_BINARY_DIR}/generated/pluma_version.h;${CMAKE_SOURCE_DIR}/res/resource.h")
 
 add_executable(pluma WIN32 ${PLUMA_SOURCES})
 
