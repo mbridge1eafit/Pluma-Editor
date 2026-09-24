@@ -33,6 +33,8 @@ constexpr int kMinTabWidth = 1;
 constexpr int kMaxTabWidth = 16;
 constexpr int kMinOutlineWidth = 140;  // Logical pixels (96 DPI)
 constexpr int kMaxOutlineWidth = 600;
+constexpr int kMinExplorerWidth = 140; // Logical pixels (96 DPI)
+constexpr int kMaxExplorerWidth = 600;
 constexpr float kMinSplitRatio = 0.15f;
 constexpr float kMaxSplitRatio = 0.85f;
 constexpr int kMinPdfMarginMm = 5;
@@ -59,9 +61,12 @@ struct Settings {
     StartupView startupView = StartupView::Remember;
     ViewLayout lastView = ViewLayout::Split;
     bool showOutline = false;
+    bool showExplorer = false;
     bool showStatusBar = true;
+    bool showToolbar = true;
     bool syncScroll = true;
     int outlineWidth = 240;           // Logical pixels
+    int explorerWidth = 240;          // Logical pixels
     float splitRatio = 0.5f;
 
     // Window

@@ -65,6 +65,7 @@ BEGIN
     "X",            IDM_FORMAT_STRIKE,      VIRTKEY, CONTROL, SHIFT
     "O",            IDM_VIEW_OUTLINE,       VIRTKEY, CONTROL, SHIFT
     "E",            IDM_VIEW_OUTLINE_PANEL, VIRTKEY, CONTROL, SHIFT
+    "F",            IDM_VIEW_EXPLORER_PANEL, VIRTKEY, CONTROL, SHIFT
     VK_OEM_COMMA,   IDM_SETTINGS_PREFERENCES, VIRTKEY, CONTROL
 END
 
@@ -126,6 +127,8 @@ BEGIN
         END
         MENUITEM SEPARATOR
         MENUITEM "&Panel de encabezados\tCtrl+Shift+E", IDM_VIEW_OUTLINE_PANEL
+        MENUITEM "&Explorador de archivos\tCtrl+Shift+F", IDM_VIEW_EXPLORER_PANEL
+        MENUITEM "&Barra de herramientas",       IDM_VIEW_TOOLBAR
         MENUITEM "&Barra de estado",             IDM_VIEW_STATUSBAR
         MENUITEM "&Esquema de encabezados...\tCtrl+Shift+O", IDM_VIEW_OUTLINE
     END

@@ -27,9 +27,11 @@
 #include "../export/pdf_exporter.h"
 #include "../config/settings.h"
 #include "../outline/outline_panel.h"
+#include "../explorer/file_explorer_panel.h"
 #include "../platform/file_association.h"
 #include "../update/updater.h"
 #include "settings_dialog.h"
+#include "toolbar.h"
 #include "update_ui.h"
 #include "../../res/resource.h"
 #include "pluma_version.h"
@@ -63,8 +65,9 @@ using ViewMode = Pluma::Config::ViewLayout;
 // Draggable dividers of the main window.
 enum class Divider {
     None,
-    Outline, // Between the headings panel and the editor
-    Split    // Between the editor and the preview
+    Explorer, // Between the file explorer panel and whatever comes next
+    Outline,  // Between the headings panel and the editor
+    Split     // Between the editor and the preview
 };
 
 static HANDLE g_hStartupEvent = nullptr;
@@ -214,6 +217,7 @@ public:
         m_preview.SetBaseDirectory(m_currentPath.parent_path());
         m_preview.ResetScroll();
         if (m_syncScroll) m_syncScroll->Reset();
+        m_explorer.SetCurrentFile(m_currentPath);
         SHAddToRecentDocs(SHARD_PATHW, m_currentPath.c_str());
 
         UpdateTitle();
@@ -256,6 +260,8 @@ public:
         m_currentPath = path;
         m_editor.SetSavePoint();
         m_preview.SetBaseDirectory(m_currentPath.parent_path());
+        m_explorer.SetCurrentFile(m_currentPath);
+        m_explorer.Refresh(); // The save may have created a new file in the folder.
         UpdateTitle();
         UpdateStatusBar();
         return true;
@@ -455,6 +461,7 @@ public:
         m_preview.SetBaseDirectory({});
         m_preview.ResetScroll();
         if (m_syncScroll) m_syncScroll->Reset();
+        m_explorer.SetCurrentFile({});
         UpdateTitle();
         TriggerParse();
         UpdateStatusBar();
@@ -512,11 +519,14 @@ public:
     }
 
     struct Layout {
-        RECT outline{};        // Empty when the headings panel is hidden
+        RECT toolbar{};         // Empty when the toolbar is hidden
+        RECT explorer{};        // Empty when the file explorer panel is hidden
+        RECT explorerDivider{};
+        RECT outline{};         // Empty when the headings panel is hidden
         RECT outlineDivider{};
-        RECT editor{};         // Empty in "preview only"
-        RECT splitDivider{};   // Empty unless in split view
-        RECT preview{};        // Empty in "editor only"
+        RECT editor{};          // Empty in "preview only"
+        RECT splitDivider{};    // Empty unless in split view
+        RECT preview{};         // Empty in "editor only"
     };
 
     // Positions of the panels in client coordinates (status bar excluded).
@@ -531,37 +541,55 @@ public:
             GetWindowRect(m_hwndStatusBar, &rcSB);
             h -= rcSB.bottom - rcSB.top;
         }
+        int y = 0;
+        if (m_settings.showToolbar && m_toolbar.GetHwnd()) {
+            const int toolbarH = m_toolbar.GetHeight();
+            layout.toolbar = RECT{0, 0, w, toolbarH};
+            y = toolbarH;
+            h -= toolbarH;
+        }
         h = (std::max)(10, h);
         if (w <= 0) return layout;
 
         const int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
+        const int minContentW = Pluma::Platform::ScaleForDpi(160, m_dpi);
+        const int minPanelW = Pluma::Platform::ScaleForDpi(80, m_dpi);
         int contentX = 0;
+        if (m_settings.showExplorer) {
+            // Side panels never squeeze the document below a usable width.
+            const int maxWidth = w - contentX - dividerW - minContentW;
+            const int explorerW = (std::min)(Pluma::Platform::ScaleForDpi(m_settings.explorerWidth, m_dpi), maxWidth);
+            if (explorerW >= minPanelW) {
+                layout.explorer = RECT{contentX, y, contentX + explorerW, y + h};
+                layout.explorerDivider = RECT{contentX + explorerW, y, contentX + explorerW + dividerW, y + h};
+                contentX += explorerW + dividerW;
+            }
+        }
         if (m_settings.showOutline) {
-            // The panel never squeezes the document below a usable width.
-            const int maxWidth = w - dividerW - Pluma::Platform::ScaleForDpi(160, m_dpi);
+            const int maxWidth = w - contentX - dividerW - minContentW;
             const int outlineW = (std::min)(Pluma::Platform::ScaleForDpi(m_settings.outlineWidth, m_dpi), maxWidth);
-            if (outlineW >= Pluma::Platform::ScaleForDpi(80, m_dpi)) {
-                layout.outline = RECT{0, 0, outlineW, h};
-                layout.outlineDivider = RECT{outlineW, 0, outlineW + dividerW, h};
-                contentX = outlineW + dividerW;
+            if (outlineW >= minPanelW) {
+                layout.outline = RECT{contentX, y, contentX + outlineW, y + h};
+                layout.outlineDivider = RECT{contentX + outlineW, y, contentX + outlineW + dividerW, y + h};
+                contentX += outlineW + dividerW;
             }
         }
         const int contentW = (std::max)(1, w - contentX);
 
         switch (m_viewMode) {
         case ViewMode::EditorOnly:
-            layout.editor = RECT{contentX, 0, contentX + contentW, h};
+            layout.editor = RECT{contentX, y, contentX + contentW, y + h};
             break;
         case ViewMode::PreviewOnly:
-            layout.preview = RECT{contentX, 0, contentX + contentW, h};
+            layout.preview = RECT{contentX, y, contentX + contentW, y + h};
             break;
         case ViewMode::Split: {
             int editorW = static_cast<int>((contentW - dividerW) * m_splitRatio);
             editorW = (std::clamp)(editorW, 50, (std::max)(50, contentW - dividerW - 50));
             const int dividerX = contentX + editorW;
-            layout.editor = RECT{contentX, 0, dividerX, h};
-            layout.splitDivider = RECT{dividerX, 0, dividerX + dividerW, h};
-            layout.preview = RECT{dividerX + dividerW, 0, (std::max)(dividerX + dividerW + 50, contentX + contentW), h};
+            layout.editor = RECT{contentX, y, dividerX, y + h};
+            layout.splitDivider = RECT{dividerX, y, dividerX + dividerW, y + h};
+            layout.preview = RECT{dividerX + dividerW, y, (std::max)(dividerX + dividerW + 50, contentX + contentW), y + h};
             break;
         }
         }
@@ -572,6 +600,7 @@ public:
         const Layout layout = ComputeLayout();
         if (PtInRect(&layout.splitDivider, pt)) return Divider::Split;
         if (PtInRect(&layout.outlineDivider, pt)) return Divider::Outline;
+        if (PtInRect(&layout.explorerDivider, pt)) return Divider::Explorer;
         return Divider::None;
     }
 
@@ -596,6 +625,17 @@ public:
         }
 
         const Layout layout = ComputeLayout();
+        if (m_toolbar.GetHwnd()) {
+            if (m_settings.showToolbar) {
+                SetWindowPos(m_toolbar.GetHwnd(), nullptr, layout.toolbar.left, layout.toolbar.top,
+                            layout.toolbar.right - layout.toolbar.left, layout.toolbar.bottom - layout.toolbar.top,
+                            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            } else {
+                ShowWindow(m_toolbar.GetHwnd(), SW_HIDE);
+            }
+            m_toolbar.UpdateState(m_viewMode, m_settings.showOutline, m_settings.showExplorer);
+        }
+        if (m_explorer.GetHwnd()) PlaceWindow(m_explorer.GetHwnd(), layout.explorer);
         if (m_outline.GetHwnd()) PlaceWindow(m_outline.GetHwnd(), layout.outline);
         PlaceWindow(m_editor.GetHwnd(), layout.editor);
         PlaceWindow(m_preview.GetHwnd(), layout.preview);
@@ -608,6 +648,10 @@ public:
             CheckMenuRadioItem(hMenu, IDM_VIEW_EDITOR_ONLY, IDM_VIEW_PREVIEW_ONLY, checkId, MF_BYCOMMAND);
             CheckMenuItem(hMenu, IDM_VIEW_OUTLINE_PANEL,
                           MF_BYCOMMAND | (m_settings.showOutline ? MF_CHECKED : MF_UNCHECKED));
+            CheckMenuItem(hMenu, IDM_VIEW_EXPLORER_PANEL,
+                          MF_BYCOMMAND | (m_settings.showExplorer ? MF_CHECKED : MF_UNCHECKED));
+            CheckMenuItem(hMenu, IDM_VIEW_TOOLBAR,
+                          MF_BYCOMMAND | (m_settings.showToolbar ? MF_CHECKED : MF_UNCHECKED));
             CheckMenuItem(hMenu, IDM_VIEW_STATUSBAR,
                           MF_BYCOMMAND | (m_settings.showStatusBar ? MF_CHECKED : MF_UNCHECKED));
         }
@@ -1068,6 +1112,9 @@ private:
             SetWindowSubclass(m_hwndStatusBar, StatusBarSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
             UpdateStatusBarParts();
 
+            m_toolbar.Create(m_hwnd, m_hInstance);
+            m_toolbar.ApplyTheme(darkMode);
+
             m_editor.Create(m_hwnd, m_hInstance, kEditorControlId, 0, 0, width / 2, height);
             ApplyEditorSettings();
             m_editor.ApplyTheme(darkMode);
@@ -1082,6 +1129,16 @@ private:
             m_outline.SetDarkMode(darkMode);
             m_outline.SetOnNavigate([this](int line, bool focusView) { NavigateToLine(line, focusView); });
             m_outline.SetOnClose([this] { SetOutlineVisible(false); });
+
+            m_explorer.Create(m_hwnd, m_hInstance);
+            m_explorer.SetDarkMode(darkMode);
+            m_explorer.SetOnOpenFile([this](const std::filesystem::path& path) {
+                if (PromptSaveChanges()) {
+                    OpenFile(path);
+                }
+            });
+            m_explorer.SetOnClose([this] { SetExplorerVisible(false); });
+
             m_preview.SetOnOpenDocumentCallback([this](const std::filesystem::path& path) {
                 // Links to other Markdown files open in Pluma itself.
                 if (PromptSaveChanges()) {
@@ -1262,6 +1319,10 @@ private:
                 m_settings.outlineWidth = Pluma::Config::Settings{}.outlineWidth;
                 RelayoutChildren();
                 return 0;
+            case Divider::Explorer:
+                m_settings.explorerWidth = Pluma::Config::Settings{}.explorerWidth;
+                RelayoutChildren();
+                return 0;
             default:
                 break;
             }
@@ -1303,6 +1364,8 @@ private:
             m_dpi = HIWORD(wParam);
             m_preview.SetDpi(PreviewDpi());
             m_outline.SetDpi(m_dpi);
+            m_explorer.SetDpi(m_dpi);
+            m_toolbar.SetDpi(m_dpi);
             m_statusFont.reset();
             UpdateStatusBarParts();
             auto* const prcNewWindow = reinterpret_cast<RECT*>(lParam);
@@ -1320,6 +1383,7 @@ private:
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(m_hwnd, &ps);
             const Layout layout = ComputeLayout();
+            PaintDivider(hdc, layout.explorerDivider, Divider::Explorer);
             PaintDivider(hdc, layout.outlineDivider, Divider::Outline);
             PaintDivider(hdc, layout.splitDivider, Divider::Split);
             EndPaint(m_hwnd, &ps);
@@ -1417,6 +1481,13 @@ private:
                 SetOutlineVisible(!m_settings.showOutline);
                 if (m_settings.showOutline) m_outline.Focus();
                 return 0;
+            case IDM_VIEW_EXPLORER_PANEL:
+                SetExplorerVisible(!m_settings.showExplorer);
+                if (m_settings.showExplorer) m_explorer.Focus();
+                return 0;
+            case IDM_VIEW_TOOLBAR:
+                SetToolbarVisible(!m_settings.showToolbar);
+                return 0;
             case IDM_VIEW_STATUSBAR:
                 SetStatusBarVisible(!m_settings.showStatusBar);
                 return 0;
@@ -1508,6 +1579,8 @@ private:
         m_editor.ApplyTheme(darkMode);
         m_preview.SetDarkMode(darkMode);
         m_outline.SetDarkMode(darkMode);
+        m_explorer.SetDarkMode(darkMode);
+        m_toolbar.ApplyTheme(darkMode);
 
         UpdateThemeMenuRadio();
         Pluma::Platform::RefreshWindowFrame(m_hwnd);
@@ -1562,6 +1635,21 @@ private:
     void SetStatusBarVisible(bool visible) {
         m_settings.showStatusBar = visible;
         if (m_hwndStatusBar) ShowWindow(m_hwndStatusBar, visible ? SW_SHOW : SW_HIDE);
+        RelayoutChildren();
+    }
+
+    void SetExplorerVisible(bool visible) {
+        const bool hadFocus = !visible && m_explorer.GetHwnd() && IsChild(m_explorer.GetHwnd(), GetFocus());
+        m_settings.showExplorer = visible;
+        if (visible) {
+            m_explorer.SetCurrentFile(m_currentPath);
+        }
+        RelayoutChildren();
+        if (hadFocus) FocusMainView();
+    }
+
+    void SetToolbarVisible(bool visible) {
+        m_settings.showToolbar = visible;
         RelayoutChildren();
     }
 
@@ -1762,6 +1850,7 @@ private:
     void InvalidateDividers() {
         const Layout layout = ComputeLayout();
         InvalidateRect(m_hwnd, &layout.outlineDivider, FALSE);
+        InvalidateRect(m_hwnd, &layout.explorerDivider, FALSE);
         InvalidateRect(m_hwnd, &layout.splitDivider, FALSE);
     }
 
@@ -1777,9 +1866,13 @@ private:
                 m_splitRatio = (std::clamp)(ratio, Pluma::Config::kMinSplitRatio, Pluma::Config::kMaxSplitRatio);
             }
         } else if (m_dragDivider == Divider::Outline) {
-            const int logical = MulDiv(mouseX - dividerW / 2, 96, static_cast<int>(m_dpi));
+            const int logical = MulDiv(mouseX - layout.outline.left - dividerW / 2, 96, static_cast<int>(m_dpi));
             m_settings.outlineWidth =
                 (std::clamp)(logical, Pluma::Config::kMinOutlineWidth, Pluma::Config::kMaxOutlineWidth);
+        } else if (m_dragDivider == Divider::Explorer) {
+            const int logical = MulDiv(mouseX - layout.explorer.left - dividerW / 2, 96, static_cast<int>(m_dpi));
+            m_settings.explorerWidth =
+                (std::clamp)(logical, Pluma::Config::kMinExplorerWidth, Pluma::Config::kMaxExplorerWidth);
         }
         RelayoutChildren();
         UpdateWindow(m_hwnd);
@@ -1956,6 +2049,8 @@ private:
     Pluma::Config::Settings m_settings;
     std::filesystem::path m_settingsPath;
     Pluma::Outline::OutlinePanel m_outline;
+    Pluma::Explorer::FileExplorerPanel m_explorer;
+    Pluma::App::Toolbar m_toolbar;
     std::vector<Pluma::Outline::Heading> m_headings; // From the last applied parse
     UINT m_dpi = 96;
     HCURSOR m_hSizeWeCursor = nullptr;
