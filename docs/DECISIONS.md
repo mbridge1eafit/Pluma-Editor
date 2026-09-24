@@ -30,3 +30,19 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
 - **Contexto:** NF-01 y la sección 2 exigen arranque en frío ≤ 60 ms (límite duro 100 ms) medido hasta el primer frame pintado.
 - **Decisión:** La ventana principal emite una señal mediante un Named Event de Windows (`Local\PlumaStartupEvent_<PID>`) o marcador ETW justo después de procesar el primer `WM_PAINT`. El script de benchmark `bench/startup.ps1` mide el tiempo transcurrido desde `CreateProcess` hasta la señal del evento, garantizando exactitud de microsegundos sin interferir en el hilo de UI.
 - **Alternativas descartadas:** Medición basada en sondeo de títulos de ventana o inspección de procesos (demasiado imprecisas e introducen jitter en la medición).
+
+---
+
+## [2026-09-23] Decisión 004: Integración directa de Scintilla y Lexilla (M1.2, M1.3)
+
+- **Contexto:** M1.2 exige evitar el costo de `SendMessage` en el editor, y M1.3 requiere resaltado Markdown nativo en modo claro y oscuro.
+- **Decisión:** Usar `SCI_GETDIRECTFUNCTION` y `SCI_GETDIRECTPOINTER` para obtener un puntero a función directa en C (`sptr_t (*)(sptr_t, unsigned int, uptr_t, sptr_t)`), eliminando la sobrecarga del subsistema de mensajes de Windows en operaciones de edición. El lexer Markdown se instancia directamente mediante `lmMarkdown.Create()` enlazado estáticamente sin registro dinámico ni dependencias de runtime.
+- **Alternativas descartadas:** Carga dinámica vía `LoadLibrary("Lexilla.dll")` (violaría la regla de un solo ejecutable portable y el límite estricto de dependencias).
+
+---
+
+## [2026-09-23] Decisión 005: Preservación de codificación y guardado atómico (M1.1, F-02, F-03, NF-08)
+
+- **Contexto:** F-03 exige round-trip byte a byte sin alterar codificación (UTF-8 con/sin BOM, UTF-16 LE/BE) ni saltos de línea (CRLF, LF). NF-08 exige guardado atómico para prevenir pérdidas de datos ante cortes imprevistos.
+- **Decisión:** `DocumentIO` analiza los primeros bytes para BOM (3 bytes para UTF-8 BOM, 2 bytes para UTF-16 LE/BE) y preserva el formato original al guardar. Si el archivo no tiene BOM, se trata como UTF-8 directo. Para archivos mayores a 1 MB se usa `CreateFileMappingW` + `MapViewOfFile`. El guardado atómico escribe primero a un archivo temporal (`.tmp_<timestamp>_<pid>`) en el mismo directorio, descarga búferes a disco (`FlushFileBuffers`), y ejecuta `ReplaceFileW` (con fallback a `MoveFileExW` con `MOVEFILE_REPLACE_EXISTING`).
+- **Alternativas descartadas:** Sobrescritura directa de archivos in-place (riesgo de corrupción de datos si el proceso o el sistema se interrumpe a mitad de escritura).
