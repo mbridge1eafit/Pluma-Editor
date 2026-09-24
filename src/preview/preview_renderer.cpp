@@ -9,6 +9,15 @@ namespace {
 // Colour emoji (Segoe UI Emoji) instead of monochrome outlines (Windows 8.1+).
 constexpr D2D1_DRAW_TEXT_OPTIONS kTextOptions = D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT;
 
+D2D1_COLOR_F ToColor(uint32_t rgb) {
+    return D2D1::ColorF(static_cast<float>((rgb >> 16) & 0xFF) / 255.0f, static_cast<float>((rgb >> 8) & 0xFF) / 255.0f,
+                        static_cast<float>(rgb & 0xFF) / 255.0f, 1.0f);
+}
+
+bool IsStraight(const Diagram::Point& from, const Diagram::Segment& s) {
+    return s.c1.x == from.x && s.c1.y == from.y && s.c2.x == s.end.x && s.c2.y == s.end.y;
+}
+
 } // namespace
 
 bool PreviewRenderer::CreateResources(ID2D1RenderTarget* rt, const PreviewThemeColors& colors) {
@@ -37,6 +46,7 @@ bool PreviewRenderer::CreateResources(ID2D1RenderTarget* rt, const PreviewThemeC
         {colors.tableStripeBg, m_brushTableStripe},
         {colors.accent, m_brushAccent},
         {colors.accentText, m_brushAccentText},
+        {colors.text, m_brushDiagram},
     };
     for (const auto& spec : specs) {
         if (FAILED(rt->CreateSolidColorBrush(spec.color, &spec.brush))) {
@@ -44,6 +54,19 @@ bool PreviewRenderer::CreateResources(ID2D1RenderTarget* rt, const PreviewThemeC
             return false;
         }
     }
+
+    // Dash lengths are multiples of the stroke width.
+    Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+    rt->GetFactory(&factory);
+    auto props = D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT,
+                                             D2D1_LINE_JOIN_ROUND);
+    factory->CreateStrokeStyle(props, nullptr, 0, &m_strokeRound);
+    props.dashStyle = D2D1_DASH_STYLE_CUSTOM;
+    const float dashes[] = {3.5f, 2.8f};
+    factory->CreateStrokeStyle(props, dashes, 2, &m_strokeDashed);
+    const float dots[] = {1.2f, 2.0f};
+    factory->CreateStrokeStyle(props, dots, 2, &m_strokeDotted);
+    m_diagramPalette = colors.diagram;
     return true;
 }
 
@@ -65,6 +88,10 @@ void PreviewRenderer::DiscardResources() {
     m_brushTableStripe.Reset();
     m_brushAccent.Reset();
     m_brushAccentText.Reset();
+    m_brushDiagram.Reset();
+    m_strokeRound.Reset();
+    m_strokeDashed.Reset();
+    m_strokeDotted.Reset();
 }
 
 void PreviewRenderer::ApplyTextEffects(const LayoutEngine& layout) const {
@@ -209,6 +236,101 @@ void PreviewRenderer::DrawTable(ID2D1RenderTarget* rt, const LayoutBlock& block)
     rt->SetAntialiasMode(previous);
 }
 
+void PreviewRenderer::EnsureDiagramGeometries(ID2D1Factory* factory, const DiagramVisual& visual) const {
+    const auto& items = visual.scene->items;
+    if (visual.geometryFactory.Get() == factory && visual.geometries.size() == items.size()) return;
+
+    visual.geometryFactory = factory;
+    visual.geometries.assign(items.size(), nullptr);
+    for (size_t i = 0; i < items.size(); ++i) {
+        const Diagram::Primitive& p = items[i];
+        if (p.kind != Diagram::PrimitiveKind::Path) continue;
+        Microsoft::WRL::ComPtr<ID2D1PathGeometry> geometry;
+        Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(factory->CreatePathGeometry(&geometry)) || FAILED(geometry->Open(&sink))) continue;
+        sink->BeginFigure(D2D1::Point2F(p.start.x, p.start.y), D2D1_FIGURE_BEGIN_FILLED);
+        Diagram::Point prev = p.start;
+        for (const auto& s : p.segments) {
+            if (IsStraight(prev, s)) {
+                sink->AddLine(D2D1::Point2F(s.end.x, s.end.y));
+            } else {
+                sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(s.c1.x, s.c1.y), D2D1::Point2F(s.c2.x, s.c2.y),
+                                                    D2D1::Point2F(s.end.x, s.end.y)));
+            }
+            prev = s.end;
+        }
+        sink->EndFigure(p.closed ? D2D1_FIGURE_END_CLOSED : D2D1_FIGURE_END_OPEN);
+        if (SUCCEEDED(sink->Close())) {
+            visual.geometries[i] = std::move(geometry);
+        }
+    }
+}
+
+void PreviewRenderer::DrawDiagram(ID2D1RenderTarget* rt, const LayoutBlock& block) const {
+    const DiagramVisual& visual = *block.diagram;
+    const auto& items = visual.scene->items;
+
+    Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+    rt->GetFactory(&factory);
+    EnsureDiagramGeometries(factory.Get(), visual);
+
+    D2D1_MATRIX_3X2_F previous{};
+    rt->GetTransform(&previous);
+    rt->SetTransform(D2D1::Matrix3x2F::Scale(block.diagramScale, block.diagramScale) *
+                     D2D1::Matrix3x2F::Translation(block.diagramOrigin.x, block.diagramOrigin.y) * previous);
+
+    ID2D1SolidColorBrush* brush = m_brushDiagram.Get();
+    auto paint = [&](const Diagram::Paint& p) {
+        brush->SetColor(ToColor(m_diagramPalette.Resolve(p)));
+        return brush;
+    };
+    auto strokeStyle = [&](const Diagram::Primitive& p) {
+        switch (p.lineStyle) {
+        case Diagram::LineStyle::Dashed: return m_strokeDashed.Get();
+        case Diagram::LineStyle::Dotted: return m_strokeDotted.Get();
+        default:                         return m_strokeRound.Get();
+        }
+    };
+
+    for (size_t i = 0; i < items.size(); ++i) {
+        const Diagram::Primitive& p = items[i];
+        switch (p.kind) {
+        case Diagram::PrimitiveKind::Rect: {
+            const D2D1_RECT_F r = D2D1::RectF(p.x, p.y, p.x + p.w, p.y + p.h);
+            if (p.radius > 0.0f) {
+                const D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r, p.radius, p.radius);
+                if (!p.fill.IsNone()) rt->FillRoundedRectangle(rr, paint(p.fill));
+                if (!p.stroke.IsNone()) rt->DrawRoundedRectangle(rr, paint(p.stroke), p.strokeWidth, strokeStyle(p));
+            } else {
+                if (!p.fill.IsNone()) rt->FillRectangle(r, paint(p.fill));
+                if (!p.stroke.IsNone()) rt->DrawRectangle(r, paint(p.stroke), p.strokeWidth, strokeStyle(p));
+            }
+            break;
+        }
+        case Diagram::PrimitiveKind::Ellipse: {
+            const D2D1_ELLIPSE e = D2D1::Ellipse(D2D1::Point2F(p.x, p.y), p.w, p.h);
+            if (!p.fill.IsNone()) rt->FillEllipse(e, paint(p.fill));
+            if (!p.stroke.IsNone()) rt->DrawEllipse(e, paint(p.stroke), p.strokeWidth, strokeStyle(p));
+            break;
+        }
+        case Diagram::PrimitiveKind::Path: {
+            ID2D1PathGeometry* geometry = visual.geometries[i].Get();
+            if (!geometry) break;
+            if (!p.fill.IsNone()) rt->FillGeometry(geometry, paint(p.fill));
+            if (!p.stroke.IsNone()) rt->DrawGeometry(geometry, paint(p.stroke), p.strokeWidth, strokeStyle(p));
+            break;
+        }
+        case Diagram::PrimitiveKind::Text: {
+            const DiagramText& text = visual.texts[i];
+            if (text.layout) rt->DrawTextLayout(text.origin, text.layout.Get(), paint(p.fill), kTextOptions);
+            break;
+        }
+        }
+    }
+
+    rt->SetTransform(previous);
+}
+
 void PreviewRenderer::Draw(ID2D1RenderTarget* rt, const LayoutEngine& layout, float scrollY, float viewHeight) const {
     if (!rt || !HasResources()) return;
 
@@ -249,7 +371,11 @@ void PreviewRenderer::Draw(ID2D1RenderTarget* rt, const LayoutEngine& layout, fl
             break;
 
         case Markdown::BlockType::CodeBlock:
-            DrawCodeBlock(rt, block);
+            if (block.diagram) {
+                DrawDiagram(rt, block);
+            } else {
+                DrawCodeBlock(rt, block);
+            }
             break;
 
         case Markdown::BlockType::ThematicBreak:

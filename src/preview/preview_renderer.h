@@ -31,6 +31,8 @@ private:
     void DrawListMarker(ID2D1RenderTarget* rt, const LayoutBlock& block) const;
     void DrawCodeBlock(ID2D1RenderTarget* rt, const LayoutBlock& block) const;
     void DrawTable(ID2D1RenderTarget* rt, const LayoutBlock& block) const;
+    void DrawDiagram(ID2D1RenderTarget* rt, const LayoutBlock& block) const;
+    void EnsureDiagramGeometries(ID2D1Factory* factory, const DiagramVisual& visual) const;
     ID2D1Brush* TextBrushFor(const LayoutBlock& block) const;
 
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushText;
@@ -50,6 +52,13 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushTableStripe;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushAccent;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushAccentText;
+
+    // Diagrams: one brush recoloured per primitive from the theme palette.
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushDiagram;
+    Microsoft::WRL::ComPtr<ID2D1StrokeStyle> m_strokeRound;
+    Microsoft::WRL::ComPtr<ID2D1StrokeStyle> m_strokeDashed;
+    Microsoft::WRL::ComPtr<ID2D1StrokeStyle> m_strokeDotted;
+    Diagram::Palette m_diagramPalette;
 };
 
 } // namespace Pluma::Preview

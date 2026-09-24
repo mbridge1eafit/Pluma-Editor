@@ -1,4 +1,6 @@
 #include "html_exporter.h"
+#include "../diagram/mermaid.h"
+#include "../diagram/svg_writer.h"
 #include "../io/document_io.h"
 #include "../markdown/emoji.h"
 #include "../markdown/slug.h"
@@ -143,6 +145,52 @@ std::string PostProcessBody(const std::string& body) {
     return out;
 }
 
+// Replaces ```mermaid code blocks with inline SVG diagrams (the source stays if it cannot be rendered).
+std::string RenderMermaidBlocks(const std::string& body) {
+    static constexpr std::string_view kOpen = "<pre><code class=\"language-";
+    static constexpr std::string_view kClose = "</code></pre>";
+    if (body.find(kOpen) == std::string::npos) {
+        return body;
+    }
+
+    const Diagram::MeasureText measure = [](std::string_view text, float size, bool bold) {
+        return Diagram::EstimateTextWidth(text, size, bold);
+    };
+    std::string out;
+    out.reserve(body.size());
+    size_t pos = 0;
+    while (true) {
+        const size_t start = body.find(kOpen, pos);
+        if (start == std::string::npos) break;
+        const size_t langStart = start + kOpen.size();
+        const size_t langEnd = body.find('"', langStart);
+        const size_t contentStart = langEnd == std::string::npos ? std::string::npos : body.find('>', langEnd);
+        const size_t end = contentStart == std::string::npos ? std::string::npos : body.find(kClose, contentStart);
+        if (end == std::string::npos) break;
+
+        const std::string_view lang(body.data() + langStart, langEnd - langStart);
+        if (!Diagram::IsMermaidLanguage(lang)) {
+            out.append(body, pos, end + kClose.size() - pos);
+            pos = end + kClose.size();
+            continue;
+        }
+
+        const std::string source = HtmlToPlainText(std::string_view(body).substr(contentStart + 1, end - contentStart - 1));
+        const Diagram::MermaidResult result = Diagram::RenderMermaid(source, measure);
+        out.append(body, pos, start - pos);
+        if (result.scene) {
+            out += "<figure class=\"mermaid-diagram\">";
+            out += Diagram::WriteSvg(*result.scene, "Diagrama Mermaid");
+            out += "</figure>";
+        } else {
+            out.append(body, start, end + kClose.size() - start);
+        }
+        pos = end + kClose.size();
+    }
+    out.append(body, pos, std::string::npos);
+    return out;
+}
+
 } // namespace
 
 std::string HtmlExporter::GetEmbeddedCss(HtmlTheme theme) {
@@ -218,8 +266,33 @@ std::string HtmlExporter::GetEmbeddedCss(HtmlTheme theme) {
 )CSS";
     }
 
+    // Mermaid diagram colours (inline SVG reads them through CSS custom properties).
+    const std::string lightDiagram = Diagram::SvgPaletteVariables(Diagram::Palette::Light());
+    const std::string darkDiagram = Diagram::SvgPaletteVariables(Diagram::Palette::Dark());
+    if (theme == HtmlTheme::Dark) {
+        css << ":root {" << darkDiagram << "}\n";
+    } else {
+        css << ":root {" << lightDiagram << "}\n";
+        if (theme == HtmlTheme::Auto) {
+            css << "@media (prefers-color-scheme: dark) {\n  :root {" << darkDiagram << "}\n}\n";
+        }
+    }
+
     // Core styles
     css << R"CSS(
+.mermaid-diagram {
+  margin: 0 0 16px;
+  text-align: center;
+  overflow-x: auto;
+}
+.mermaid-diagram svg {
+  display: inline-block;
+}
+@media print {
+  .mermaid-diagram {
+    page-break-inside: avoid;
+  }
+}
 * {
   box-sizing: border-box;
 }
@@ -406,7 +479,7 @@ std::string HtmlExporter::ExportToString(std::string_view markdown, const HtmlEx
     if (res != 0) {
         return {};
     }
-    htmlBody = PostProcessBody(htmlBody);
+    htmlBody = RenderMermaidBlocks(PostProcessBody(htmlBody));
 
     std::ostringstream doc;
     doc << "<!DOCTYPE html>\n";

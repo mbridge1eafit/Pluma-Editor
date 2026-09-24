@@ -159,3 +159,20 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
   - *Registro de Windows para las preferencias:* menos transparente para el usuario e incompatible con el modo portable.
   - *Escribir `UserChoice` directamente:* Windows invalida la entrada (hash) y restablece la asociación; no es un mecanismo soportado.
   - *Selector «Abrir con» (`SHOpenWithDialog`):* desde Windows 10 ignora `OAIF_*_REGISTRATION` y, sin `OAIF_EXEC`, solo muestra un aviso que remite a Configuración (y devuelve éxito). Con `OAIF_EXEC` abriría un archivo de muestra y solo asociaría `.md`.
+
+---
+
+## [2026-09-24] Decisión 012: Renderizado nativo de diagramas Mermaid
+
+- **Contexto:** Los bloques ` ```mermaid ` se mostraban como código. La referencia de Mermaid es una biblioteca JavaScript que necesita un DOM y un navegador, prohibidos por NF-09.
+- **Decisión:**
+  - *Motor propio en C++ (`src/diagram/`):* parser y layout de `flowchart`/`graph` (direcciones TB/TD/BT/LR/RL, las 14 formas de nodo, sintaxis `A@{ shape }`, aristas `-->`, `---`, `-.->`, `==>`, `~~~`, `<-->`, `--o`, `--x`, etiquetas `|texto|` y `-- texto -->`, longitud por guiones extra, cadenas y `&`, `subgraph` anidados, `classDef`/`class`/`:::`/`style`/`linkStyle`), `sequenceDiagram` (participantes y actores, 10 tipos de flecha, activaciones `+`/`-` y `activate`, notas, `loop`/`alt`/`else`/`opt`/`par`/`critical`/`break`/`rect`, `autonumber`, `title`), `stateDiagram(-v2)` (inicio/fin por ámbito, estados compuestos, `<<fork>>`/`<<join>>`/`<<choice>>`, descripciones, notas) y `pie` (`showData`, `title`). Se aceptan front matter (`title:`) y directivas `%%{init}%%` (ignoradas).
+  - *Layout jerárquico tipo Sugiyama (`graph_layout.*`):* inversión de ciclos por DFS, rangos por camino más largo con fuentes ajustadas, nodos ficticios por rango atravesado (el central lleva la etiqueta, como dagre), reducción de cruces por baricentro manteniendo contiguos los subgrafos, coordenadas por regresión isotónica ponderada con separaciones mínimas (aristas largas rectas) y una pasada que expulsa del marco de cada subgrafo los nodos ajenos en todos los rangos que abarca.
+  - *Escena vectorial independiente del backend (`diagram_scene.h`):* rectángulos, elipses, trazos Bézier y texto de una línea con colores por *rol*. El tema se resuelve al pintar, así que cambiar claro/oscuro no rehace el layout. Cada backend aporta la medición de texto de su propia fuente para que las etiquetas siempre quepan: DirectWrite (Segoe UI) en la vista previa, métricas AFM de Helvetica en PDF y Helvetica/Arial en SVG.
+  - *Vista previa:* `LayoutEngine` cachea la escena y sus `IDWriteTextLayout` por texto fuente (se descartan las no usadas en el último layout) y escala el diagrama al ancho de la columna; `PreviewRenderer` crea las geometrías Direct2D una sola vez por diagrama y recolorea un único pincel por primitiva.
+  - *HTML:* SVG inline autocontenido cuyos colores son variables CSS (`--pluma-mm-*`) con la paleta clara de respaldo, por lo que sigue el tema claro/oscuro/automático de la página. *PDF:* operadores vectoriales (`re`, `c`, `B`, texto WinAnsi) escalados a la página.
+  - *Errores:* un diagrama inválido o de un tipo no compatible (`classDiagram`, `erDiagram`, `gantt`, `gitGraph`, `mindmap`...) se muestra como bloque de código con el motivo en la etiqueta (vista previa) o como código (HTML/PDF). Entradas de más de 64 KB o más de 400 nodos se rechazan para no bloquear el hilo de UI.
+- **Alternativas descartadas:**
+  - *mermaid.js en WebView2 o con un motor JavaScript embebido (QuickJS):* WebView2 está prohibido por NF-09 y mermaid.js depende del DOM y de la medición de texto del navegador.
+  - *`mmdc` (mermaid-cli) externo:* requiere Node.js y Chromium instalados.
+  - *Cargar mermaid.js desde un CDN en el HTML exportado:* rompería el requisito de HTML autocontenido y usable sin conexión.
