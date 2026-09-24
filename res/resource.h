@@ -47,6 +47,7 @@
 #define IDM_SETTINGS_DEFAULT_EDITOR     40072
 
 #define IDM_HELP_ABOUT                  40041
+#define IDM_HELP_CHECK_UPDATES          40042
 
 // Preferences dialog
 #ifndef IDC_STATIC
@@ -76,6 +77,7 @@
 #define IDC_SET_ASSOC_BUTTON            2021
 #define IDC_SET_RESET                   2022
 #define IDC_SET_APPLY                   2023
+#define IDC_SET_CHECKUPDATES            2024
 #define IDC_SET_HEADER_APPEARANCE       2031
 #define IDC_SET_HEADER_EDITOR           2032
 #define IDC_SET_HEADER_VIEW             2033

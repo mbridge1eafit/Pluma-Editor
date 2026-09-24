@@ -32,9 +32,11 @@ gh release edit vX.Y.Z --notes-file dist\RELEASE_NOTES.md
 ## Quick Summary
 
 The project provides three automated scripts in `scripts/`:
-1. `scripts/package_release.ps1`: Builds the portable ZIP and computes `SHA256SUMS.txt`.
+1. `scripts/package_release.ps1`: Builds the portable ZIP and the Inno Setup installer (`installer/pluma.iss`) and computes `SHA256SUMS.txt`. It fails if the version of `pluma.exe` does not match the tag.
 2. `scripts/generate_release_notes.ps1`: Parses Conventional Commits into categorized Markdown release notes (UTF-8 without BOM, published as-is).
 3. `scripts/publish_release.ps1`: Complete orchestrator combining pre-flight checks, building, testing, packaging, release notes, publication and verification of the published notes.
+
+Building the installer needs Inno Setup 6 (`winget install --id JRSoftware.InnoSetup -e`; CI installs it with Chocolatey). Without it `package_release.ps1` only warns and skips the installer, but `-RequireInstaller` (used by CI) and `publish_release.ps1 -Mode gh-cli` fail: **every release must publish the installer**, because Pluma's built-in updater downloads `pluma-vX.Y.Z-setup-x64.exe` and verifies it against `SHA256SUMS.txt`.
 
 Run the scripts with PowerShell 7 (`pwsh`). Launching Windows PowerShell 5.1 (`powershell.exe`) from a PowerShell 7 console inherits a `PSModulePath` that breaks `Get-FileHash`. Build steps need the MSVC environment (`vcvars64.bat`) loaded.
 
@@ -45,7 +47,7 @@ Run the scripts with PowerShell 7 (`pwsh`). Launching Windows PowerShell 5.1 (`p
 ### Before Publishing
 
 1. Choose the version with SemVer from the commits since the last tag (`feat` → minor, only `fix` → patch). Tags that already exist (`git ls-remote --tags origin`) cannot be reused.
-2. Bump the version in `CMakeLists.txt` (`project(... VERSION)`), `res/pluma.rc` (`FILEVERSION`, `PRODUCTVERSION`, `FileVersion`, `ProductVersion`) and `res/pluma.manifest`, and commit it (`chore(release): bump version to X.Y.Z`).
+2. Bump the version in `CMakeLists.txt` (`project(... VERSION)`) and `res/pluma.manifest`, and commit it (`chore(release): bump version to X.Y.Z`). `res/pluma.rc` and the code take it from the generated `pluma_version.h`; never publish a tag that differs from `project(VERSION)`, or installed copies would be offered the same update forever.
 3. Everything to release must be committed and pushed to `master`: the release is built from the tagged commit.
 4. Publishing is outward-facing: confirm the version and mode with the user before pushing a tag or creating a release.
 
@@ -83,7 +85,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\package_release.ps1 -Versi
 ```
 This produces:
 - `dist/pluma-vX.Y.Z-windows-x64.zip`
-- `dist/SHA256SUMS.txt`
+- `dist/pluma-vX.Y.Z-setup-x64.exe`
+- `dist/SHA256SUMS.txt` (ZIP, installer and `pluma.exe`)
 
 #### Step 3: Generate Categorized Release Notes
 ```powershell
@@ -108,7 +111,7 @@ git push origin vX.Y.Z
 
 **Via GitHub CLI (`gh`):**
 ```powershell
-gh release create vX.Y.Z dist\pluma-vX.Y.Z-windows-x64.zip dist\SHA256SUMS.txt --title "Pluma vX.Y.Z" --notes-file dist\RELEASE_NOTES.md
+gh release create vX.Y.Z dist\pluma-vX.Y.Z-windows-x64.zip dist\pluma-vX.Y.Z-setup-x64.exe dist\SHA256SUMS.txt --title "Pluma vX.Y.Z" --notes-file dist\RELEASE_NOTES.md
 ```
 
 ---
@@ -123,9 +126,10 @@ A release is complete only when all of these pass:
    gh release view vX.Y.Z --json body --jq .body
    ```
    It must start with `# Pluma vX.Y.Z` and contain the hash from the published `SHA256SUMS.txt`. If not, fix it with the commands in *Mandatory Rule* above.
-3. Both the `.zip` and `SHA256SUMS.txt` assets are downloadable and the hashes match:
+3. The `.zip`, `-setup-x64.exe` and `SHA256SUMS.txt` assets are downloadable and the hashes match (the updater refuses an installer whose hash is missing or different):
    ```powershell
-   gh release download vX.Y.Z -p "*.zip" -D $env:TEMP --clobber
+   gh release download vX.Y.Z -p "*.zip" -p "*-setup-x64.exe" -D $env:TEMP --clobber
    (Get-FileHash "$env:TEMP\pluma-vX.Y.Z-windows-x64.zip" -Algorithm SHA256).Hash.ToLower()
+   (Get-FileHash "$env:TEMP\pluma-vX.Y.Z-setup-x64.exe" -Algorithm SHA256).Hash.ToLower()
    ```
 4. The release page shows it as *Latest*: `https://github.com/mbridge1eafit/Pluma-Editor/releases`.

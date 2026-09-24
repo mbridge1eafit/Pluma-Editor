@@ -163,9 +163,14 @@ if (Test-Path $checksumPath) {
 
 # Instrucciones de ejecucion en Windows
 $lines.Add('### Instrucciones para Windows')
+$lines.Add('**Instalador (recomendado):** descarga `pluma-' + $Version + '-setup-x64.exe` y ejecutalo. No requiere permisos de administrador, permite asociar los archivos Markdown (.md, .markdown, .mdown) con Pluma y actualiza una version anterior conservando la configuracion. Pluma instalado busca actualizaciones automaticamente (Ayuda > Buscar actualizaciones).')
+$lines.Add('')
+$lines.Add('**Version portable (ZIP):**')
 $lines.Add('1. Descarga y descomprime el archivo ZIP en la carpeta de tu preferencia.')
 $lines.Add('2. Desbloquear en Windows: Haz clic derecho sobre el ZIP o pluma.exe -> Propiedades -> marca Desbloquear (Unblock) -> Aceptar.')
 $lines.Add('3. Ejecuta pluma.exe directamente. Es totalmente portable y no requiere instalacion ni dependencias adicionales.')
+$lines.Add('')
+$lines.Add('Al no estar firmado digitalmente, Windows SmartScreen puede advertir al abrir el instalador: pulsa "Mas informacion" -> "Ejecutar de todas formas".')
 
 # Guardar archivo de salida
 $outDir = Split-Path -Parent $OutputPath

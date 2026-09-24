@@ -104,6 +104,16 @@ void ReadInt(const ValueMap& values, std::string_view key, int& out) {
     if (ec == std::errc{} && ptr == last) out = value;
 }
 
+void ReadInt64(const ValueMap& values, std::string_view key, long long& out) {
+    const std::string* raw = Find(values, key);
+    if (!raw || raw->empty()) return;
+    long long value = 0;
+    const char* first = raw->data();
+    const char* last = first + raw->size();
+    const auto [ptr, ec] = std::from_chars(first, last, value);
+    if (ec == std::errc{} && ptr == last) out = value;
+}
+
 void ReadFloat(const ValueMap& values, std::string_view key, float& out) {
     const std::string* raw = Find(values, key);
     if (!raw || raw->empty()) return;
@@ -224,6 +234,11 @@ void Settings::Sanitize() {
     pdfMarginMm = std::clamp(pdfMarginMm, kMinPdfMarginMm, kMaxPdfMarginMm);
     if (newFileLineEnding == IO::LineEnding::CR) newFileLineEnding = IO::LineEnding::CRLF;
     if (windowWidth <= 0 || windowHeight <= 0) hasWindowRect = false;
+    if (lastUpdateCheck < 0) lastUpdateCheck = 0;
+    // A tag is a single token; anything else (line breaks from a hand-edited file) is dropped.
+    if (skippedVersion.size() > 64 || skippedVersion.find_first_of(" \t\r\n") != std::string::npos) {
+        skippedVersion.clear();
+    }
 }
 
 Settings ParseSettings(std::string_view iniUtf8) {
@@ -266,6 +281,10 @@ Settings ParseSettings(std::string_view iniUtf8) {
     ReadEnum(v, "export.pdfpagesize", s.pdfPageSize, kPageSizes);
     ReadInt(v, "export.pdfmarginmm", s.pdfMarginMm);
     ReadEnum(v, "export.htmltheme", s.htmlTheme, kHtmlThemes);
+
+    ReadBool(v, "updates.checkautomatically", s.checkForUpdates);
+    ReadInt64(v, "updates.lastcheck", s.lastUpdateCheck);
+    if (const std::string* raw = Find(v, "updates.skippedversion")) s.skippedVersion = *raw;
 
     s.Sanitize();
     return s;
@@ -314,6 +333,11 @@ std::string SerializeSettings(const Settings& s) {
     w.Value("PdfPageSize", EnumName(s.pdfPageSize, kPageSizes));
     w.Int("PdfMarginMm", s.pdfMarginMm);
     w.Value("HtmlTheme", EnumName(s.htmlTheme, kHtmlThemes));
+
+    w.Section("Updates");
+    w.Bool("CheckAutomatically", s.checkForUpdates);
+    w.Value("LastCheck", std::to_string(s.lastUpdateCheck));
+    w.Value("SkippedVersion", s.skippedVersion);
     return w.Take();
 }
 

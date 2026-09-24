@@ -51,6 +51,19 @@ jobs:
         run: |
           .\bench\startup.ps1 -ExePath "build/release/bin/pluma.exe" -FailOnHardLimit
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem "${env:ProgramFiles(x86)}/Inno Setup*/ISCC.exe" -ErrorAction SilentlyContinue)) {
+            choco install innosetup --no-progress -y
+          }
+
+      # Validates installer/pluma.iss and the version check of the packaging script.
+      - name: Build Installer
+        shell: pwsh
+        run: |
+          .\scripts\package_release.ps1 -RequireInstaller
+
       - name: Configure ASan Preset
         run: cmake --preset asan
 

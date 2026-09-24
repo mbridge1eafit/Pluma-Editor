@@ -98,6 +98,20 @@ set(PLUMA_SOURCES
     src/export/html_exporter.cpp
     src/export/pdf_exporter.h
     src/export/pdf_exporter.cpp
+    src/update/version.h
+    src/update/version.cpp
+    src/update/json.h
+    src/update/json.cpp
+    src/update/release_info.h
+    src/update/release_info.cpp
+    src/update/sha256.h
+    src/update/sha256.cpp
+    src/update/http_client.h
+    src/update/http_client.cpp
+    src/update/updater.h
+    src/update/updater.cpp
+    src/app/update_ui.h
+    src/app/update_ui.cpp
     res/pluma.rc
     res/resource.h
     res/pluma.manifest
@@ -105,11 +119,15 @@ set(PLUMA_SOURCES
     res/icons/doc_md.ico
 )
 
+# Single source of the version for the code and the resources (res/pluma.rc)
+configure_file(res/version.h.in ${CMAKE_BINARY_DIR}/generated/pluma_version.h @ONLY)
+
 add_executable(pluma WIN32 ${PLUMA_SOURCES})
 
 target_include_directories(pluma PRIVATE
     src
     res
+    ${CMAKE_BINARY_DIR}/generated
     third_party/md4c/src
     third_party/scintilla/include
     third_party/lexilla/include
@@ -133,6 +151,8 @@ target_link_libraries(pluma PRIVATE
     comdlg32
     ole32
     imm32
+    winhttp
+    bcrypt
     delayimp
 )
 
@@ -141,6 +161,8 @@ if(MSVC)
     target_link_options(pluma PRIVATE
         "/DELAYLOAD:windowscodecs.dll"
         "/DELAYLOAD:comdlg32.dll"
+        "/DELAYLOAD:winhttp.dll"
+        "/DELAYLOAD:bcrypt.dll"
     )
 endif()
 

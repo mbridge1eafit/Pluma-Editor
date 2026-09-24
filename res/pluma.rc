@@ -1,6 +1,7 @@
 #pragma code_page(65001)
 #include <windows.h>
 #include "resource.h"
+#include "pluma_version.h"
 
 // Application Manifest is handled by CMake target_sources
  
@@ -10,8 +11,8 @@ IDI_DOC_MD      ICON    "icons/doc_md.ico"
 
 // Version Information
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     0,2,0,0
-PRODUCTVERSION  0,2,0,0
+FILEVERSION     PLUMA_VERSION_MAJOR,PLUMA_VERSION_MINOR,PLUMA_VERSION_PATCH,0
+PRODUCTVERSION  PLUMA_VERSION_MAJOR,PLUMA_VERSION_MINOR,PLUMA_VERSION_PATCH,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
 FILEFLAGS       VS_FF_DEBUG
@@ -28,11 +29,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Mauricio Bridge"
             VALUE "FileDescription",  "Pluma - Editor Markdown nativo para Windows"
-            VALUE "FileVersion",      "0.2.0.0"
+            VALUE "FileVersion",      PLUMA_VERSION_RC
             VALUE "InternalName",     "pluma"
             VALUE "OriginalFilename", "pluma.exe"
             VALUE "ProductName",      "Pluma"
-            VALUE "ProductVersion",   "0.2.0.0"
+            VALUE "ProductVersion",   PLUMA_VERSION_RC
         END
     END
     BLOCK "VarFileInfo"
@@ -136,13 +137,15 @@ BEGIN
     END
     POPUP "A&yuda"
     BEGIN
+        MENUITEM "Buscar &actualizaciones...",   IDM_HELP_CHECK_UPDATES
+        MENUITEM SEPARATOR
         MENUITEM "&Acerca de Pluma...",          IDM_HELP_ABOUT
     END
 END
 
 // Preferences dialog
 LANGUAGE LANG_SPANISH, SUBLANG_DEFAULT
-IDD_SETTINGS DIALOGEX 0, 0, 420, 258
+IDD_SETTINGS DIALOGEX 0, 0, 420, 272
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Preferencias"
 FONT 9, "Segoe UI", 400, 0, 0x1
@@ -190,11 +193,12 @@ BEGIN
     LTEXT           "Integración con Windows", IDC_SET_HEADER_WINDOWS, 12, 198, 396, 10
     LTEXT           "", IDC_SET_ASSOC_STATUS, 12, 214, 250, 8
     PUSHBUTTON      "Establecer como &predeterminado...", IDC_SET_ASSOC_BUTTON, 268, 211, 140, 14
+    CONTROL         "Buscar act&ualizaciones automáticamente al iniciar", IDC_SET_CHECKUPDATES, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 230, 250, 10
 
-    PUSHBUTTON      "&Restablecer valores", IDC_SET_RESET, 12, 236, 90, 14
-    DEFPUSHBUTTON   "Aceptar", IDOK, 248, 236, 50, 14
-    PUSHBUTTON      "Cancelar", IDCANCEL, 302, 236, 50, 14
-    PUSHBUTTON      "Apl&icar", IDC_SET_APPLY, 356, 236, 52, 14
+    PUSHBUTTON      "&Restablecer valores", IDC_SET_RESET, 12, 250, 90, 14
+    DEFPUSHBUTTON   "Aceptar", IDOK, 248, 250, 50, 14
+    PUSHBUTTON      "Cancelar", IDCANCEL, 302, 250, 50, 14
+    PUSHBUTTON      "Apl&icar", IDC_SET_APPLY, 356, 250, 52, 14
 END
 
 // String Tables (Spanish)

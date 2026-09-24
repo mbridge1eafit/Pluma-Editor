@@ -176,3 +176,22 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
   - *mermaid.js en WebView2 o con un motor JavaScript embebido (QuickJS):* WebView2 está prohibido por NF-09 y mermaid.js depende del DOM y de la medición de texto del navegador.
   - *`mmdc` (mermaid-cli) externo:* requiere Node.js y Chromium instalados.
   - *Cargar mermaid.js desde un CDN en el HTML exportado:* rompería el requisito de HTML autocontenido y usable sin conexión.
+
+---
+
+## [2026-09-24] Decisión 013: Instalador y actualización automática
+
+- **Contexto:** Pluma se distribuía solo como ZIP portable: el usuario tenía que enterarse por su cuenta de las versiones nuevas, descargarlas y reemplazar el ejecutable. Se necesita un instalador que asocie los archivos Markdown y que sirva para actualizar, y que la aplicación avise de las versiones nuevas y se actualice sola si el usuario lo acepta.
+- **Decisión:**
+  - *Instalador (`installer/pluma.iss`, Inno Setup 6):* instalación **por usuario** (`PrivilegesRequired=lowest`, `%LOCALAPPDATA%\Programs\Pluma`), sin UAC, lo que permite actualizar sin elevar. Tarea «Abrir los archivos Markdown con Pluma de forma predeterminada» (marcada por defecto) que escribe en `HKCU` las mismas claves que `RegisterMarkdownHandler`; el ProgID, «Abrir con» y las *Capabilities* se registran siempre. Si el usuario ya eligió otra aplicación (`UserChoice`/`UserChoiceLatest`), Windows solo permite cambiarlo en Configuración: la página final ofrece abrir `ms-settings:defaultapps?registeredAppUser=Pluma`. El desinstalador elimina todas las claves.
+  - *Actualización con el mismo instalador:* el `AppId` es fijo, así que una versión nueva se instala encima de la anterior conservando carpeta, tareas elegidas (`UsePreviousTasks`) y `%APPDATA%\Pluma\pluma.ini`. `pluma.exe` mantiene el mutex `PlumaEditorAppMutex`; el instalador espera a que desaparezca (hasta 30 s en una actualización lanzada por Pluma) o pide cerrar Pluma.
+  - *Comprobación en la aplicación (`src/update/`):* 4 s después de arrancar (sin afectar al arranque, NF-01) y como máximo una vez al día, un hilo consulta `GET /repos/mbridge1eafit/Pluma-Editor/releases/latest` con WinHTTP (HTTPS obligatorio, proxy del sistema). Parser JSON propio mínimo y probado; comparación SemVer; se ignoran borradores, *prereleases* y la versión que el usuario decidió omitir. `Ayuda > Buscar actualizaciones…` hace la consulta a demanda. Se desactiva en Preferencias.
+  - *Flujo de actualización:* diálogo nativo (`TaskDialogIndirect`) con las novedades y tres opciones: *Actualizar ahora*, *Recordármelo más tarde*, *Omitir esta versión*. Al aceptar, se descarga el instalador (`pluma-vX.Y.Z-setup-x64.exe`) a `%TEMP%\Pluma\Update` con barra de progreso cancelable, se verifica con el SHA-256 publicado en `SHA256SUMS.txt` (CNG/`bcrypt`), se pide guardar el documento, se comprueba que no haya otras ventanas de Pluma y se lanza `/SILENT /SUPPRESSMSGBOXES /NORESTART /SP- /PLUMAUPDATE=1 /PLUMAOPEN="doc.md"`. Pluma se cierra; el instalador actualiza y vuelve a abrirlo con el mismo documento.
+  - *Copias portables:* si `pluma.exe` no está en la carpeta registrada por el instalador (`HKCU\...\Uninstall\{AppId}_is1\InstallLocation`), el aviso ofrece abrir la página de la versión en lugar de instalar.
+  - *Versión única:* `project(VERSION)` de CMake genera `pluma_version.h`, usado por el código y por `pluma.rc`. `package_release.ps1` falla si la versión de `pluma.exe` no coincide con el tag (si no, el actualizador ofrecería la misma versión sin fin). `winhttp.dll` y `bcrypt.dll` se cargan en diferido (NF-04).
+- **Alternativas descartadas:**
+  - *MSI (WiX):* más pesado de mantener y orientado a instalaciones por máquina; las actualizaciones mayores de MSI son más frágiles que la reinstalación en sitio de Inno Setup.
+  - *NSIS:* equivalente en capacidad, pero Inno Setup ofrece de serie actualización en sitio por `AppId`, recuerdo de tareas, desinstalación de claves del registro y un asistente moderno.
+  - *Actualizador que reemplaza `pluma.exe` directamente (sin instalador):* obligaría a mantener dos caminos de instalación y a reimplementar el registro de asociaciones y la desinstalación.
+  - *Instalación para todos los usuarios (Program Files):* cada actualización necesitaría UAC.
+  - *Verificar solo con HTTPS:* no detecta descargas corruptas o truncadas; el SHA-256 publicado con la versión sí. (El instalador no está firmado con Authenticode: requiere un certificado de pago.)
