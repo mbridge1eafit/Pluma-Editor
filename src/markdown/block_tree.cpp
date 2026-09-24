@@ -134,6 +134,27 @@ void DumpBlock(const Block& block, std::ostringstream& oss, int depth) {
 
 } // namespace
 
+namespace {
+
+void AppendPlainText(const std::vector<Span>& spans, std::string& out) {
+    for (const auto& s : spans) {
+        if (s.type == SpanType::LineBreak) {
+            out.push_back(' ');
+            continue;
+        }
+        out.append(s.text);
+        AppendPlainText(s.children, out);
+    }
+}
+
+} // namespace
+
+std::string ExtractPlainText(const std::vector<Span>& spans) {
+    std::string res;
+    AppendPlainText(spans, res);
+    return res;
+}
+
 std::string BlockTree::DumpToString() const {
     std::ostringstream oss;
     if (root) {

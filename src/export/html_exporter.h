@@ -16,6 +16,7 @@ struct HtmlExportOptions {
     std::string title = "Pluma Document";
     HtmlTheme theme = HtmlTheme::Auto;
     bool embedStyles = true;
+    std::string language = "es"; // <html lang="...">: hyphenation and screen readers
 };
 
 class HtmlExporter {

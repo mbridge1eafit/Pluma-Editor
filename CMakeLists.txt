@@ -57,12 +57,18 @@ set(PLUMA_SOURCES
     src/editor/editor_view.cpp
     src/markdown/block_tree.h
     src/markdown/block_tree.cpp
+    src/markdown/slug.h
+    src/markdown/slug.cpp
+    src/markdown/emoji.h
+    src/markdown/emoji.cpp
     src/markdown/md4c_adapter.h
     src/markdown/md4c_adapter.cpp
     src/markdown/parse_worker.h
     src/markdown/parse_worker.cpp
     src/preview/preview_layout.h
     src/preview/preview_layout.cpp
+    src/preview/preview_renderer.h
+    src/preview/preview_renderer.cpp
     src/preview/preview_view.h
     src/preview/preview_view.cpp
     src/sync/sync_scroll.h

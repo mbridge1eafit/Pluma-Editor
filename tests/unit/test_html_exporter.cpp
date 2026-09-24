@@ -20,7 +20,7 @@ TEST(HtmlExporterTest, StandaloneStructureAndTags) {
     EXPECT_NE(html.find("<!DOCTYPE html>"), std::string::npos);
     EXPECT_NE(html.find("<title>Test Doc</title>"), std::string::npos);
     EXPECT_NE(html.find("<style>"), std::string::npos);
-    EXPECT_NE(html.find("<h1>Main Title</h1>"), std::string::npos);
+    EXPECT_NE(html.find("<h1 id=\"main-title\">Main Title</h1>"), std::string::npos);
     EXPECT_NE(html.find("<strong>bold</strong>"), std::string::npos);
     EXPECT_NE(html.find("<em>italic</em>"), std::string::npos);
     EXPECT_NE(html.find("<code>inline code</code>"), std::string::npos);
@@ -94,4 +94,25 @@ TEST(HtmlExporterTest, HighPerformanceLargeDocument) {
     EXPECT_FALSE(html.empty());
     // F-09 requires export in < 500 ms for 1 MB
     EXPECT_LT(ms, 500);
+}
+
+TEST(HtmlExporterTest, HeadingAnchorsAndEmojiShortcodes) {
+    std::string markdown =
+        "# Introducción :rocket:\n\n"
+        "## Introducción\n\n"
+        "[ir](#introducción) :tada: `:tada:`\n";
+
+    std::string html = HtmlExporter::ExportToString(markdown);
+
+    EXPECT_NE(html.find("<h1 id=\"introducción\">"), std::string::npos);
+    EXPECT_NE(html.find("<h2 id=\"introducción-1\">"), std::string::npos);
+    EXPECT_NE(html.find("🎉"), std::string::npos);
+    EXPECT_NE(html.find("<code>:tada:</code>"), std::string::npos); // Code stays literal
+    EXPECT_NE(html.find("lang=\"es\""), std::string::npos);
+}
+
+TEST(HtmlExporterTest, TablesCannotOverflowThePage) {
+    std::string css = HtmlExporter::GetEmbeddedCss(HtmlTheme::Auto);
+    EXPECT_NE(css.find("overflow-x: auto"), std::string::npos);
+    EXPECT_NE(css.find("overflow-wrap: anywhere"), std::string::npos);
 }

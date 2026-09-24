@@ -17,6 +17,48 @@ inline COLORREF MakeSciColor(uint8_t r, uint8_t g, uint8_t b) {
     return RGB(r, g, b);
 }
 
+int CALLBACK FontExistsProc(const LOGFONTW*, const TEXTMETRICW*, DWORD, LPARAM lParam) {
+    *reinterpret_cast<bool*>(lParam) = true;
+    return 0; // Stop enumeration
+}
+
+bool FontExists(const wchar_t* faceName) {
+    LOGFONTW lf{};
+    lf.lfCharSet = DEFAULT_CHARSET;
+    wcsncpy_s(lf.lfFaceName, faceName, _TRUNCATE);
+    bool found = false;
+    HDC hdc = GetDC(nullptr);
+    EnumFontFamiliesExW(hdc, &lf, FontExistsProc, reinterpret_cast<LPARAM>(&found), 0);
+    ReleaseDC(nullptr, hdc);
+    return found;
+}
+
+// Cascadia Code ships with Windows 11 / Terminal; Windows 10 always has Consolas.
+const char* EditorFontName() {
+    static const char* s_font = [] {
+        if (FontExists(L"Cascadia Code")) return "Cascadia Code";
+        if (FontExists(L"Cascadia Mono")) return "Cascadia Mono";
+        return "Consolas";
+    }();
+    return s_font;
+}
+
+// True when `text` is `prefix` + content + `suffix`, without mistaking "**bold**" for "*italic*".
+bool IsWrappedBy(std::string_view text, std::string_view prefix, std::string_view suffix) {
+    if (text.size() < prefix.size() + suffix.size() || !text.starts_with(prefix) || !text.ends_with(suffix)) {
+        return false;
+    }
+    if (prefix.size() == 1 && text.size() > 2) {
+        const char m = prefix[0];
+        const bool doubledStart = text[1] == m && !(text.size() > 3 && text[2] == m);
+        const bool doubledEnd = text[text.size() - 2] == m && !(text.size() > 3 && text[text.size() - 3] == m);
+        if (doubledStart || doubledEnd) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 bool EditorView::InitializeScintilla(HINSTANCE hInstance) {
@@ -93,8 +135,23 @@ bool EditorView::Create(HWND parent, HINSTANCE hInstance, int controlId,
         SendMessageW(m_hwndScintilla, SCI_GETDIRECTFUNCTION, 0, 0));
     m_ptrDirect = SendMessageW(m_hwndScintilla, SCI_GETDIRECTPOINTER, 0, 0);
 
-    // Modern text rendering: DirectWrite (hardware accelerated)
+    // Modern text rendering: DirectWrite (hardware accelerated, colour emoji).
+    // Direct2D already double-buffers, Scintilla's own buffer is redundant.
     Call(SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITE);
+    Call(SCI_SETBUFFEREDDRAW, 0);
+    Call(SCI_SETLAYOUTCACHE, SC_CACHE_PAGE);
+    Call(SCI_SETIMEINTERACTION, SC_IME_INLINE);
+
+    // Comfortable editing defaults
+    Call(SCI_SETMULTIPLESELECTION, 1);
+    Call(SCI_SETADDITIONALSELECTIONTYPING, 1);
+    Call(SCI_SETMOUSEWHEELCAPTURES, 0);
+    Call(SCI_SETSCROLLWIDTH, 1);
+    Call(SCI_SETSCROLLWIDTHTRACKING, 1);
+    Call(SCI_SETWRAPINDENTMODE, SC_WRAPINDENT_SAME);
+    Call(SCI_SETEXTRAASCENT, 2);
+    Call(SCI_SETEXTRADESCENT, 2);
+    Call(SCI_SETMARGINLEFT, 0, 4);
 
     // UTF-8 document codepage (F-03)
     Call(SCI_SETCODEPAGE, SC_CP_UTF8);
@@ -102,9 +159,8 @@ bool EditorView::Create(HWND parent, HINSTANCE hInstance, int controlId,
     // Initial word wrap
     Call(SCI_SETWRAPMODE, m_wordWrap ? SC_WRAP_WORD : SC_WRAP_NONE);
 
-    // Margin 0: Line numbers
+    // Margin 0: Line numbers (width computed from the font in UpdateLineNumberMargin)
     Call(SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER);
-    Call(SCI_SETMARGINWIDTHN, 0, 48);
 
     // Margin 1: Symbol margin (none for now)
     Call(SCI_SETMARGINWIDTHN, 1, 0);
@@ -146,10 +202,29 @@ std::string EditorView::GetText() const {
 }
 
 void EditorView::SetText(std::string_view text) {
-    Call(SCI_SETTEXT, 0, reinterpret_cast<sptr_t>(text.data()));
+    // Length-based insertion: string_view is not NUL-terminated and documents may contain NULs.
+    Call(SCI_SETUNDOCOLLECTION, 0);
+    Call(SCI_CLEARALL);
+    if (!text.empty()) {
+        Call(SCI_APPENDTEXT, text.size(), reinterpret_cast<sptr_t>(text.data()));
+    }
+    Call(SCI_SETUNDOCOLLECTION, 1);
     Call(SCI_EMPTYUNDOBUFFER);
     Call(SCI_SETSAVEPOINT);
+    Call(SCI_GOTOPOS, 0);
     UpdateLineNumberMargin();
+}
+
+void EditorView::SetEolMode(int sciEolMode) {
+    Call(SCI_SETEOLMODE, sciEolMode);
+}
+
+std::string_view EditorView::EolString() const {
+    switch (Call(SCI_GETEOLMODE)) {
+    case SC_EOL_LF: return "\n";
+    case SC_EOL_CR: return "\r";
+    default:        return "\r\n";
+    }
 }
 
 bool EditorView::IsModified() const {
@@ -313,6 +388,28 @@ int EditorView::ReplaceAll(std::string_view findText, std::string_view replaceTe
     return count;
 }
 
+bool EditorView::SelectionMatches(std::string_view text, bool matchCase) const {
+    const sptr_t start = Call(SCI_GETSELECTIONSTART);
+    const sptr_t end = Call(SCI_GETSELECTIONEND);
+    if (text.empty() || end - start != static_cast<sptr_t>(text.size())) {
+        return false;
+    }
+    const std::string selected = GetRange(start, end);
+    if (matchCase) {
+        return selected == text;
+    }
+    auto toWide = [](std::string_view utf8) {
+        std::wstring w(utf8.size(), L'\0');
+        const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()),
+                                          w.data(), static_cast<int>(w.size()));
+        w.resize(n > 0 ? static_cast<size_t>(n) : 0);
+        return w;
+    };
+    const std::wstring a = toWide(selected);
+    const std::wstring b = toWide(text);
+    return CompareStringOrdinal(a.c_str(), static_cast<int>(a.size()), b.c_str(), static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;
+}
+
 void EditorView::ApplyTheme(bool darkMode) {
     m_isDarkMode = darkMode;
     if (m_hwndScintilla) {
@@ -322,7 +419,7 @@ void EditorView::ApplyTheme(bool darkMode) {
 }
 
 void EditorView::SetupStyles(bool darkMode) {
-    const char* fontName = "Cascadia Code";
+    const char* fontName = EditorFontName();
     int fontSize = 11;
 
     COLORREF bgColor;
@@ -426,23 +523,61 @@ void EditorView::SetupStyles(bool darkMode) {
     // Horizontal rules & strikeouts
     setStyle(SCE_MARKDOWN_HRULE, marginFgColor, bgColor, false, false, false);
     setStyle(SCE_MARKDOWN_STRIKEOUT, marginFgColor, bgColor, false, false, false);
+
+    // Fonts may have changed: recompute the line number margin.
+    m_marginDigits = 0;
+    UpdateLineNumberMargin();
 }
 
 void EditorView::WrapSelection(std::string_view prefix, std::string_view suffix) {
-    sptr_t start = Call(SCI_GETSELECTIONSTART);
-    sptr_t end = Call(SCI_GETSELECTIONEND);
-    if (start != end) {
-        std::string selected(end - start, '\0');
-        Call(SCI_GETSELTEXT, 0, reinterpret_cast<sptr_t>(selected.data()));
-        std::string replacement = std::string(prefix) + selected + std::string(suffix);
-        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(replacement.c_str()));
-        Call(SCI_SETSEL, start + prefix.size(), end + prefix.size());
-    } else {
-        std::string text = std::string(prefix) + std::string(suffix);
-        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(text.c_str()));
-        Call(SCI_SETCURRENTPOS, start + prefix.size());
-        Call(SCI_SETANCHOR, start + prefix.size());
+    const sptr_t start = Call(SCI_GETSELECTIONSTART);
+    const sptr_t end = Call(SCI_GETSELECTIONEND);
+    const auto prefixLen = static_cast<sptr_t>(prefix.size());
+    const auto suffixLen = static_cast<sptr_t>(suffix.size());
+    const sptr_t docLength = Call(SCI_GETLENGTH);
+
+    Call(SCI_BEGINUNDOACTION);
+
+    // Toggle off: the selection itself is already wrapped ("**text**" selected)...
+    const std::string selected = GetRange(start, end);
+    if (start != end && IsWrappedBy(selected, prefix, suffix)) {
+        const std::string inner = selected.substr(prefix.size(), selected.size() - prefix.size() - suffix.size());
+        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(inner.c_str()));
+        Call(SCI_SETSEL, start, start + static_cast<sptr_t>(inner.size()));
+        Call(SCI_ENDUNDOACTION);
+        return;
     }
+    // ...or the markers sit right around it ("**" + text + "**").
+    if (start >= prefixLen && end + suffixLen <= docLength) {
+        const std::string around = GetRange(start - prefixLen, end + suffixLen);
+        if (IsWrappedBy(around, prefix, suffix)) {
+            Call(SCI_DELETERANGE, end, suffixLen);
+            Call(SCI_DELETERANGE, start - prefixLen, prefixLen);
+            Call(SCI_SETSEL, start - prefixLen, end - prefixLen);
+            Call(SCI_ENDUNDOACTION);
+            return;
+        }
+    }
+
+    const std::string replacement = std::string(prefix) + selected + std::string(suffix);
+    Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(replacement.c_str()));
+    if (start != end) {
+        Call(SCI_SETSEL, start + prefixLen, end + prefixLen);
+    } else {
+        Call(SCI_SETSEL, start + prefixLen, start + prefixLen);
+    }
+    Call(SCI_ENDUNDOACTION);
+}
+
+std::string EditorView::GetRange(sptr_t start, sptr_t end) const {
+    if (end <= start) return {};
+    std::string text(static_cast<size_t>(end - start), '\0');
+    Sci_TextRangeFull tr{};
+    tr.chrg.cpMin = start;
+    tr.chrg.cpMax = end;
+    tr.lpstrText = text.data();
+    Call(SCI_GETTEXTRANGEFULL, 0, reinterpret_cast<sptr_t>(&tr));
+    return text;
 }
 
 void EditorView::InsertBold() {
@@ -454,13 +589,16 @@ void EditorView::InsertItalic() {
 }
 
 void EditorView::InsertCode() {
-    sptr_t start = Call(SCI_GETSELECTIONSTART);
-    sptr_t end = Call(SCI_GETSELECTIONEND);
+    const sptr_t start = Call(SCI_GETSELECTIONSTART);
+    const sptr_t end = Call(SCI_GETSELECTIONEND);
     if (start != end) {
-        std::string selected(end - start, '\0');
-        Call(SCI_GETSELTEXT, 0, reinterpret_cast<sptr_t>(selected.data()));
-        if (selected.find('\n') != std::string::npos) {
-            WrapSelection("```\n", "\n```");
+        const std::string selected = GetRange(start, end);
+        if (selected.find_first_of("\r\n") != std::string::npos) {
+            // Reuse the line ending already present in the selection.
+            const char* eol = selected.find("\r\n") != std::string::npos ? "\r\n"
+                            : selected.find('\n') != std::string::npos   ? "\n"
+                                                                          : "\r";
+            WrapSelection(std::string("```") + eol, std::string(eol) + "```");
             return;
         }
     }
@@ -472,22 +610,27 @@ void EditorView::InsertStrikethrough() {
 }
 
 void EditorView::InsertLink() {
-    sptr_t start = Call(SCI_GETSELECTIONSTART);
-    sptr_t end = Call(SCI_GETSELECTIONEND);
-    if (start != end) {
-        std::string selected(end - start, '\0');
-        Call(SCI_GETSELTEXT, 0, reinterpret_cast<sptr_t>(selected.data()));
-        std::string replacement = "[" + selected + "](url)";
+    const sptr_t start = Call(SCI_GETSELECTIONSTART);
+    const sptr_t end = Call(SCI_GETSELECTIONEND);
+    const std::string selected = GetRange(start, end);
+    Call(SCI_BEGINUNDOACTION);
+    if (!selected.empty()) {
+        // A selected URL becomes the target; any other text becomes the label.
+        const bool isUrl = selected.starts_with("http://") || selected.starts_with("https://") ||
+                           selected.starts_with("www.");
+        const std::string replacement = isUrl ? "[](" + selected + ")" : "[" + selected + "](url)";
         Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(replacement.c_str()));
-        sptr_t urlStart = start + selected.size() + 3;
-        sptr_t urlEnd = urlStart + 3;
-        Call(SCI_SETSEL, urlStart, urlEnd);
+        if (isUrl) {
+            Call(SCI_SETSEL, start + 1, start + 1);
+        } else {
+            const sptr_t urlStart = start + static_cast<sptr_t>(selected.size()) + 3;
+            Call(SCI_SETSEL, urlStart, urlStart + 3);
+        }
     } else {
-        std::string replacement = "[](url)";
-        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(replacement.c_str()));
-        Call(SCI_SETCURRENTPOS, start + 1);
-        Call(SCI_SETANCHOR, start + 1);
+        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>("[](url)"));
+        Call(SCI_SETSEL, start + 1, start + 1);
     }
+    Call(SCI_ENDUNDOACTION);
 }
 
 EditorView::CursorPos EditorView::GetCursorPosition() const {
@@ -498,13 +641,25 @@ EditorView::CursorPos EditorView::GetCursorPosition() const {
 }
 
 EditorView::DocumentStats EditorView::GetDocumentStats() const {
-    std::string text = GetText();
     DocumentStats stats{};
-    stats.characters = text.size();
+    const auto length = static_cast<size_t>(Call(SCI_GETLENGTH));
+    if (length == 0) {
+        return stats;
+    }
+    // Zero-copy view of the buffer (valid until the next modification).
+    const auto* text = reinterpret_cast<const unsigned char*>(Call(SCI_GETCHARACTERPOINTER));
+    if (!text) {
+        return stats;
+    }
 
     bool inWord = false;
-    for (char c : text) {
-        if (static_cast<unsigned char>(c) > 32) {
+    for (size_t i = 0; i < length; ++i) {
+        const unsigned char c = text[i];
+        if ((c & 0xC0) != 0x80) {
+            stats.characters++; // Count code points, not UTF-8 bytes ("ñ" is one character)
+        }
+        const bool isSpace = c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
+        if (!isSpace) {
             if (!inWord) {
                 stats.words++;
                 inWord = true;
@@ -523,8 +678,15 @@ void EditorView::UpdateLineNumberMargin() {
         lines /= 10;
         digits++;
     }
-    int width = std::max(4, digits) * 10 + 12;
-    Call(SCI_SETMARGINWIDTHN, 0, width);
+    digits = (std::max)(3, digits);
+    if (digits == m_marginDigits) {
+        return;
+    }
+    m_marginDigits = digits;
+    // Measured with the actual font, so it follows DPI and font changes.
+    const std::string sample(static_cast<size_t>(digits), '9');
+    const auto textWidth = Call(SCI_TEXTWIDTH, STYLE_LINENUMBER, reinterpret_cast<sptr_t>(sample.c_str()));
+    Call(SCI_SETMARGINWIDTHN, 0, textWidth + textWidth / digits + 8);
 }
 
 } // namespace Pluma::Editor

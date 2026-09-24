@@ -24,7 +24,13 @@ public:
     SyncScrollController(const SyncScrollController&) = delete;
     SyncScrollController& operator=(const SyncScrollController&) = delete;
 
-    void SetEnabled(bool enabled) noexcept { m_enabled = enabled; }
+    void SetEnabled(bool enabled) noexcept {
+        m_enabled = enabled;
+        Reset();
+    }
+
+    // Forgets the last synchronised positions (new document, view mode change)
+    void Reset() noexcept;
     bool IsEnabled() const noexcept { return m_enabled; }
 
     // Called when Scintilla scrolls (e.g. from SCN_UPDATEUI with SC_UPDATE_V_SCROLL)

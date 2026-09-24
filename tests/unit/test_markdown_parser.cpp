@@ -346,3 +346,96 @@ TEST(ParseWorkerTest, StopWithoutDeadlock) {
     worker.Stop();
     SUCCEED();
 }
+
+// ==============================================================================
+// Entities, raw HTML, emoji shortcodes and nesting
+// ==============================================================================
+
+namespace {
+
+std::string ParagraphText(const Block& block) {
+    return ExtractPlainText(block.inlineContent);
+}
+
+} // namespace
+
+TEST(Md4cAdapterTest, EntityDecodingBeyondAscii) {
+    auto tree = Md4cAdapter::Parse("&euro; &ntilde; &#241; &#x1F600; &hearts;\n");
+    ASSERT_EQ(tree->root->children.size(), 1u);
+    const std::string text = ParagraphText(*tree->root->children[0]);
+    EXPECT_NE(text.find("€"), std::string::npos);
+    EXPECT_NE(text.find("ñ ñ"), std::string::npos);
+    EXPECT_NE(text.find("😀"), std::string::npos);
+    EXPECT_NE(text.find("♥"), std::string::npos);
+    EXPECT_EQ(text.find('&'), std::string::npos);
+}
+
+TEST(Md4cAdapterTest, EmojiShortcodesOutsideCode) {
+    auto tree = Md4cAdapter::Parse("Listo :rocket: :tada: :no_existe: `:rocket:`\n");
+    ASSERT_EQ(tree->root->children.size(), 1u);
+    const auto& p = *tree->root->children[0];
+    EXPECT_NE(ParagraphText(p).find("Listo 🚀 🎉 :no_existe:"), std::string::npos);
+
+    bool codeUntouched = false;
+    for (const auto& span : p.inlineContent) {
+        if (span.type == SpanType::Code) codeUntouched = (span.text == ":rocket:");
+    }
+    EXPECT_TRUE(codeUntouched);
+}
+
+TEST(Md4cAdapterTest, EmojiShortcodesNotInCodeBlocks) {
+    auto tree = Md4cAdapter::Parse("```\n:tada:\n```\n");
+    ASSERT_EQ(tree->root->children.size(), 1u);
+    EXPECT_NE(tree->root->children[0]->inlineContent[0].text.find(":tada:"), std::string::npos);
+}
+
+TEST(Md4cAdapterTest, InlineHtmlBreaksAndHiddenTags) {
+    auto tree = Md4cAdapter::Parse("uno<br>dos <span class=\"x\">tres</span> <!-- oculto --> cuatro\n");
+    ASSERT_EQ(tree->root->children.size(), 1u);
+    const auto& p = *tree->root->children[0];
+
+    bool hasBreak = false;
+    for (const auto& span : p.inlineContent) {
+        if (span.type == SpanType::LineBreak) hasBreak = true;
+    }
+    EXPECT_TRUE(hasBreak);
+    const std::string text = ParagraphText(p);
+    EXPECT_EQ(text.find('<'), std::string::npos);
+    EXPECT_EQ(text.find("oculto"), std::string::npos);
+    EXPECT_NE(text.find("tres"), std::string::npos);
+    EXPECT_NE(text.find("cuatro"), std::string::npos);
+}
+
+TEST(Md4cAdapterTest, HtmlBlockIsStrippedAndDecoded) {
+    auto tree = Md4cAdapter::Parse("<div align=\"center\">\n  <b>Hola</b> &amp; adiós\n</div>\n\n<!-- nota -->\n");
+    ASSERT_GE(tree->root->children.size(), 1u);
+    const auto& html = *tree->root->children[0];
+    EXPECT_TRUE(html.isRawHtml);
+    EXPECT_EQ(ParagraphText(html), "Hola & adiós");
+    if (tree->root->children.size() > 1) {
+        EXPECT_TRUE(tree->root->children[1]->inlineContent.empty()); // Comment-only block
+    }
+}
+
+TEST(Md4cAdapterTest, NestedListsKeepStructureAndLines) {
+    std::string md = "1. Uno\n2. Dos\n   - Anidado\n     - Profundo\n3. Tres\n";
+    auto tree = Md4cAdapter::Parse(md);
+    ASSERT_EQ(tree->root->children.size(), 1u);
+    const auto& ol = *tree->root->children[0];
+    ASSERT_EQ(ol.children.size(), 3u);
+
+    const auto& second = *ol.children[1];
+    ASSERT_EQ(second.children.size(), 1u);
+    EXPECT_EQ(second.children[0]->type, BlockType::List);
+    EXPECT_EQ(second.children[0]->children[0]->children[0]->type, BlockType::List);
+    // The item covers its nested lines (used by synchronized scroll).
+    EXPECT_EQ(second.startLine, 2);
+    EXPECT_GE(second.endLine, 4);
+}
+
+TEST(Md4cAdapterTest, LinkDestinationEntitiesDecoded) {
+    auto tree = Md4cAdapter::Parse("[a](https://x.com/?a=1&amp;b=2)\n");
+    const auto& link = tree->root->children[0]->inlineContent[0];
+    ASSERT_EQ(link.type, SpanType::Link);
+    EXPECT_EQ(link.url, "https://x.com/?a=1&b=2");
+}

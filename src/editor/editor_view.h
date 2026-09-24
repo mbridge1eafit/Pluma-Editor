@@ -53,6 +53,10 @@ public:
     std::string GetText() const;
     void SetText(std::string_view text);
 
+    // Line ending inserted by Enter (SC_EOL_CRLF / SC_EOL_LF / SC_EOL_CR)
+    void SetEolMode(int sciEolMode);
+    std::string_view EolString() const;
+
     // Modification state
     bool IsModified() const;
     void SetSavePoint();
@@ -82,6 +86,9 @@ public:
     int ReplaceAll(std::string_view findText, std::string_view replaceText,
                    bool matchCase, bool wholeWord, bool regex);
 
+    // True when the main selection is exactly `text` (case-insensitive unless matchCase).
+    bool SelectionMatches(std::string_view text, bool matchCase) const;
+
     // Markdown formatting helpers (F-12)
     void WrapSelection(std::string_view prefix, std::string_view suffix);
     void InsertBold();
@@ -106,15 +113,19 @@ public:
     // Markdown lexer styling for Light / Dark mode (M1.3, F-05, F-09)
     void ApplyTheme(bool darkMode);
 
+    // Resizes the line number margin when the number of digits changes
+    void UpdateLineNumberMargin();
+
 private:
     void SetupStyles(bool darkMode);
-    void UpdateLineNumberMargin();
+    std::string GetRange(sptr_t start, sptr_t end) const;
 
     HWND m_hwndScintilla = nullptr;
     SciFnDirect m_fnDirect = nullptr;
     sptr_t m_ptrDirect = 0;
     bool m_isDarkMode = false;
     bool m_wordWrap = true;
+    int m_marginDigits = 0;
 };
 
 } // namespace Pluma::Editor
