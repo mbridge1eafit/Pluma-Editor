@@ -38,19 +38,9 @@ if(MSVC)
 endif()
 
 # ==============================================================================
-# md4c (Vendorized Markdown parser)
+# Third-party Dependencies (md4c, scintilla, lexilla)
 # ==============================================================================
-add_library(md4c STATIC
-    third_party/md4c/src/md4c.c
-    third_party/md4c/src/entity.c
-)
-target_include_directories(md4c PUBLIC
-    third_party/md4c/src
-)
-if(MSVC)
-    # md4c is third-party C code, suppress /WX on it to prevent upstream compiler warnings
-    target_compile_options(md4c PRIVATE /W3 /wd4996)
-endif()
+add_subdirectory(third_party)
 
 # ==============================================================================
 # Pluma Main Executable (Win32 GUI)
@@ -63,6 +53,8 @@ set(PLUMA_SOURCES
     src/platform/theme.cpp
     src/io/document_io.h
     src/io/document_io.cpp
+    src/editor/editor_view.h
+    src/editor/editor_view.cpp
     res/pluma.rc
     res/resource.h
     res/pluma.manifest
@@ -74,10 +66,15 @@ target_include_directories(pluma PRIVATE
     src
     res
     third_party/md4c/src
+    third_party/scintilla/include
+    third_party/lexilla/include
+    third_party/lexilla/lexlib
 )
 
 target_link_libraries(pluma PRIVATE
     md4c
+    scintilla
+    lexilla
     user32
     gdi32
     comctl32
@@ -88,6 +85,7 @@ target_link_libraries(pluma PRIVATE
     shell32
     comdlg32
     ole32
+    imm32
     delayimp
 )
 

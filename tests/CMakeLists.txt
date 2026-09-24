@@ -16,25 +16,36 @@ FetchContent_MakeAvailable(googletest)
 set(UNIT_TEST_SOURCES
     unit/test_platform.cpp
     unit/test_document_io.cpp
+    unit/test_editor_view.cpp
     ../src/platform/dpi.cpp
     ../src/platform/dpi.h
     ../src/platform/theme.cpp
     ../src/platform/theme.h
     ../src/io/document_io.cpp
     ../src/io/document_io.h
+    ../src/editor/editor_view.cpp
+    ../src/editor/editor_view.h
 )
 
 add_executable(unit_tests ${UNIT_TEST_SOURCES})
 
 target_include_directories(unit_tests PRIVATE
     ../src
+    ../third_party/scintilla/include
+    ../third_party/lexilla/include
+    ../third_party/lexilla/lexlib
 )
 
 target_link_libraries(unit_tests PRIVATE
     GTest::gtest_main
+    scintilla
+    lexilla
     dwmapi
     user32
     gdi32
+    imm32
+    ole32
+    uuid
 )
 
 include(GoogleTest)
