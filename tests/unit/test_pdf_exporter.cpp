@@ -134,3 +134,28 @@ TEST(PdfExporterTest, EmojiAreSkippedNotQuestionMarks) {
     std::string pdfStr(pdfBytes.begin(), pdfBytes.end());
     EXPECT_NE(pdfStr.find("(Hecho listo)"), std::string::npos);
 }
+
+TEST(PdfExporterTest, MermaidDiagramsAreVectorGraphics) {
+    const std::string markdown =
+        "Antes\n\n"
+        "```mermaid\n"
+        "flowchart TD\n"
+        "  A[Inicio] --> B{Decidir}\n"
+        "  B -->|Si| C[Fin]\n"
+        "```\n\n"
+        "Despues\n";
+    const auto bytes = PdfExporter::ExportMarkdownToBytes(markdown);
+    ASSERT_FALSE(bytes.empty());
+    const std::string pdf(bytes.begin(), bytes.end());
+    EXPECT_NE(pdf.find("(Inicio) Tj"), std::string::npos);
+    EXPECT_NE(pdf.find("(Decidir) Tj"), std::string::npos);
+    EXPECT_NE(pdf.find("(Si) Tj"), std::string::npos);
+    EXPECT_EQ(pdf.find("flowchart TD"), std::string::npos); // Not printed as code
+    EXPECT_NE(pdf.find(" c"), std::string::npos);            // Curved edges
+    EXPECT_NE(pdf.find("(Despues) Tj"), std::string::npos);
+
+    // Invalid diagrams fall back to the code listing.
+    const auto fallback = PdfExporter::ExportMarkdownToBytes("```mermaid\nclassDiagram\n  A <|-- B\n```\n");
+    const std::string fallbackPdf(fallback.begin(), fallback.end());
+    EXPECT_NE(fallbackPdf.find("(classDiagram) Tj"), std::string::npos);
+}

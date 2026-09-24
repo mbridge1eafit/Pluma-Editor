@@ -24,6 +24,7 @@ set(UNIT_TEST_SOURCES
     unit/test_pdf_exporter.cpp
     unit/test_settings.cpp
     unit/test_outline.cpp
+    unit/test_mermaid.cpp
     ../src/config/settings.cpp
     ../src/config/settings.h
     ../src/outline/outline_panel.cpp
@@ -46,6 +47,19 @@ set(UNIT_TEST_SOURCES
     ../src/markdown/md4c_adapter.h
     ../src/markdown/parse_worker.cpp
     ../src/markdown/parse_worker.h
+    ../src/diagram/diagram_scene.h
+    ../src/diagram/diagram_scene.cpp
+    ../src/diagram/graph_layout.h
+    ../src/diagram/graph_layout.cpp
+    ../src/diagram/mermaid.h
+    ../src/diagram/mermaid.cpp
+    ../src/diagram/mermaid_internal.h
+    ../src/diagram/mermaid_common.cpp
+    ../src/diagram/mermaid_flowchart.cpp
+    ../src/diagram/mermaid_sequence.cpp
+    ../src/diagram/mermaid_pie.cpp
+    ../src/diagram/svg_writer.h
+    ../src/diagram/svg_writer.cpp
     ../src/preview/preview_layout.cpp
     ../src/preview/preview_renderer.cpp
     ../src/preview/preview_renderer.h
@@ -86,6 +100,7 @@ target_link_libraries(unit_tests PRIVATE
     shell32
     comctl32
     uuid
+    windowscodecs
 )
 
 include(GoogleTest)

@@ -13,7 +13,9 @@
 #include <map>
 #include <memory>
 #include <string_view>
+#include <unordered_map>
 
+#include "../diagram/diagram_scene.h"
 #include "../markdown/block_tree.h"
 #include "../markdown/slug.h"
 
@@ -41,6 +43,7 @@ struct PreviewThemeColors {
     D2D1_COLOR_F tableStripeBg;
     D2D1_COLOR_F accent;      // Checked task boxes
     D2D1_COLOR_F accentText;  // Check mark drawn on top of the accent
+    Diagram::Palette diagram; // Mermaid diagrams
 
     static PreviewThemeColors Light();
     static PreviewThemeColors Dark();
@@ -76,6 +79,21 @@ struct TableCellLayout {
     Markdown::Alignment align = Markdown::Alignment::Default;
 };
 
+struct DiagramText {
+    ComPtr<IDWriteTextLayout> layout;
+    D2D1_POINT_2F origin{}; // Top-left corner in scene coordinates
+};
+
+// A laid out Mermaid diagram, shared between layouts while its source does not change.
+struct DiagramVisual {
+    std::shared_ptr<const Diagram::Scene> scene;
+    std::vector<DiagramText> texts; // Parallel to scene->items (no layout for non-text items)
+
+    // Path geometries, built lazily by the renderer (device independent, tied to its factory).
+    mutable ComPtr<ID2D1Factory> geometryFactory;
+    mutable std::vector<ComPtr<ID2D1PathGeometry>> geometries;
+};
+
 struct LayoutBlock {
     Markdown::BlockType type = Markdown::BlockType::Paragraph;
     D2D1_RECT_F bounds{};
@@ -97,6 +115,9 @@ struct LayoutBlock {
     D2D1_POINT_2F labelOrigin{};
     std::string info;           // CodeBlock language
     std::string codeText;       // Verbatim code content
+    std::shared_ptr<const DiagramVisual> diagram; // Rendered Mermaid code block
+    D2D1_POINT_2F diagramOrigin{};
+    float diagramScale = 1.0f;
     int startLine = 0;          // Source document line range (F-14)
     int endLine = 0;
     std::string anchorSlug;
@@ -165,6 +186,10 @@ private:
     void LayoutListItem(const Markdown::Block& block, const Context& ctx, float markerWidth,
                         bool isOrdered, int number, float& currentY);
     void LayoutCodeBlock(const Markdown::Block& block, const Context& ctx, float& currentY);
+    bool LayoutDiagram(const Markdown::Block& block, const Context& ctx, float& currentY, std::string& error);
+    std::shared_ptr<const DiagramVisual> BuildDiagram(const std::string& source, std::string& error);
+    float MeasureDiagramText(std::string_view utf8, float fontSize, bool bold);
+    IDWriteTextFormat* DiagramFormat(float fontSize, bool bold);
     void LayoutThematicBreak(const Markdown::Block& block, const Context& ctx, float& currentY);
     void LayoutTable(const Markdown::Block& block, const Context& ctx, float& currentY);
 
@@ -194,6 +219,15 @@ private:
     std::vector<size_t> m_syncBlocks; // Indices of blocks used for line <-> Y mapping (document order)
     std::map<std::string, float> m_anchors;
     std::map<std::string, int> m_slugCounts;
+
+    // Mermaid diagrams keyed by source; entries unused by the latest layout are evicted.
+    struct CachedDiagram {
+        std::shared_ptr<const DiagramVisual> visual;
+        std::string error;
+        bool used = false;
+    };
+    std::unordered_map<std::string, CachedDiagram> m_diagramCache;
+    std::map<std::pair<int, bool>, ComPtr<IDWriteTextFormat>> m_diagramFormats;
 };
 
 } // namespace Pluma::Preview

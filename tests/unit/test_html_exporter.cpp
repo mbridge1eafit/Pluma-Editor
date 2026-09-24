@@ -116,3 +116,26 @@ TEST(HtmlExporterTest, TablesCannotOverflowThePage) {
     EXPECT_NE(css.find("overflow-x: auto"), std::string::npos);
     EXPECT_NE(css.find("overflow-wrap: anywhere"), std::string::npos);
 }
+
+TEST(HtmlExporterTest, MermaidBlocksBecomeInlineSvg) {
+    const std::string markdown =
+        "# Flujo\n\n"
+        "```mermaid\n"
+        "graph LR\n"
+        "  A[Inicio] --> B{\"a < b\"}\n"
+        "```\n\n"
+        "```mermaid\n"
+        "classDiagram\n"
+        "  Animal <|-- Pato\n"
+        "```\n";
+    const std::string html = HtmlExporter::ExportToString(markdown, HtmlExportOptions{});
+
+    // The valid diagram is replaced by a self-contained SVG with escaped labels.
+    EXPECT_NE(html.find("<figure class=\"mermaid-diagram\"><svg"), std::string::npos);
+    EXPECT_NE(html.find(">Inicio</text>"), std::string::npos);
+    EXPECT_NE(html.find(">a &lt; b</text>"), std::string::npos);
+    // The unsupported one keeps its source as a code block.
+    EXPECT_NE(html.find("<code class=\"language-mermaid\">classDiagram"), std::string::npos);
+    // Diagram colours follow the page theme.
+    EXPECT_NE(html.find("--pluma-mm-node-fill:"), std::string::npos);
+}

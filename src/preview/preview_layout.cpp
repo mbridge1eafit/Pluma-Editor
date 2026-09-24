@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../diagram/mermaid.h"
+
 namespace Pluma::Preview {
 
 namespace {
@@ -164,6 +166,7 @@ PreviewThemeColors PreviewThemeColors::Light() {
     c.tableStripeBg = Hex(0xFAFBFC);
     c.accent = Hex(0x0969DA);
     c.accentText = Hex(0xFFFFFF);
+    c.diagram = Diagram::Palette::Light();
     return c;
 }
 
@@ -187,6 +190,7 @@ PreviewThemeColors PreviewThemeColors::Dark() {
     c.tableStripeBg = Hex(0x222223);
     c.accent = Hex(0x4493F8);
     c.accentText = Hex(0x0D1117);
+    c.diagram = Diagram::Palette::Dark();
     return c;
 }
 
@@ -398,6 +402,9 @@ void LayoutEngine::ComputeLayout(const Markdown::BlockTree& tree, float contentW
     if (!m_dwriteFactory || !tree.root) {
         return;
     }
+    for (auto& [source, entry] : m_diagramCache) {
+        entry.used = false;
+    }
 
     // Centered reading column with comfortable side padding.
     const float padding = contentWidth < 520.0f ? 16.0f : 32.0f;
@@ -418,6 +425,8 @@ void LayoutEngine::ComputeLayout(const Markdown::BlockTree& tree, float contentW
             m_syncBlocks.push_back(i);
         }
     }
+
+    std::erase_if(m_diagramCache, [](const auto& item) { return !item.second.used; });
 }
 
 void LayoutEngine::LayoutChildren(const Markdown::Block& parent, const Context& ctx, float& currentY) {
@@ -664,6 +673,12 @@ void LayoutEngine::LayoutListItem(const Markdown::Block& block, const Context& c
 }
 
 void LayoutEngine::LayoutCodeBlock(const Markdown::Block& block, const Context& ctx, float& currentY) {
+    // Mermaid blocks render as diagrams; if the source is invalid the code is shown with the reason.
+    std::string diagramError;
+    if (Diagram::IsMermaidLanguage(block.info) && LayoutDiagram(block, ctx, currentY, diagramError)) {
+        return;
+    }
+
     LayoutBlock lb{};
     lb.type = Markdown::BlockType::CodeBlock;
     lb.info = block.info;
@@ -682,7 +697,11 @@ void LayoutEngine::LayoutCodeBlock(const Markdown::Block& block, const Context& 
 
     float textTop = currentY + kCodePaddingY;
     if (!lb.info.empty()) {
-        lb.labelLayout = CreatePlainLayout(Utf8ToUtf16(lb.info), m_styleLabel, ctx.width - 2.0f * kCodePaddingX);
+        std::string label = lb.info;
+        if (!diagramError.empty()) {
+            label += " \u2014 " + diagramError;
+        }
+        lb.labelLayout = CreatePlainLayout(Utf8ToUtf16(label), m_styleLabel, ctx.width - 2.0f * kCodePaddingX);
         if (lb.labelLayout) {
             lb.labelLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         }
@@ -706,6 +725,112 @@ void LayoutEngine::LayoutCodeBlock(const Markdown::Block& block, const Context& 
     m_blocks.push_back(std::move(lb));
 
     currentY = bottom;
+}
+
+IDWriteTextFormat* LayoutEngine::DiagramFormat(float fontSize, bool bold) {
+    const auto key = std::make_pair(static_cast<int>(std::lround(fontSize * 100.0f)), bold);
+    if (auto it = m_diagramFormats.find(key); it != m_diagramFormats.end()) {
+        return it->second.Get();
+    }
+    wchar_t locale[LOCALE_NAME_MAX_LENGTH] = L"es-es";
+    GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH);
+    ComPtr<IDWriteTextFormat> format;
+    if (FAILED(m_dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr,
+                                                 bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_REGULAR,
+                                                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, locale,
+                                                 &format))) {
+        return nullptr;
+    }
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    return m_diagramFormats.emplace(key, std::move(format)).first->second.Get();
+}
+
+float LayoutEngine::MeasureDiagramText(std::string_view utf8, float fontSize, bool bold) {
+    IDWriteTextFormat* format = DiagramFormat(fontSize, bold);
+    const std::wstring text = Utf8ToUtf16(utf8);
+    ComPtr<IDWriteTextLayout> layout;
+    if (!format || text.empty() ||
+        FAILED(m_dwriteFactory->CreateTextLayout(text.data(), static_cast<UINT32>(text.size()), format, 1.0e5f,
+                                                 1.0e5f, &layout))) {
+        return Diagram::EstimateTextWidth(utf8, fontSize, bold);
+    }
+    DWRITE_TEXT_METRICS tm{};
+    layout->GetMetrics(&tm);
+    return tm.widthIncludingTrailingWhitespace;
+}
+
+std::shared_ptr<const DiagramVisual> LayoutEngine::BuildDiagram(const std::string& source, std::string& error) {
+    const Diagram::MermaidResult result = Diagram::RenderMermaid(
+        source, [this](std::string_view text, float size, bool bold) { return MeasureDiagramText(text, size, bold); });
+    if (!result.scene) {
+        error = result.error.empty() ? "No se pudo generar el diagrama" : result.error;
+        return nullptr;
+    }
+
+    auto visual = std::make_shared<DiagramVisual>();
+    visual->scene = result.scene;
+    visual->texts.resize(result.scene->items.size());
+    for (size_t i = 0; i < result.scene->items.size(); ++i) {
+        const Diagram::Primitive& item = result.scene->items[i];
+        if (item.kind != Diagram::PrimitiveKind::Text) continue;
+        IDWriteTextFormat* format = DiagramFormat(item.fontSize, item.bold);
+        const std::wstring text = Utf8ToUtf16(item.text);
+        ComPtr<IDWriteTextLayout> layout;
+        if (!format || text.empty() ||
+            FAILED(m_dwriteFactory->CreateTextLayout(text.data(), static_cast<UINT32>(text.size()), format, 1.0e5f,
+                                                     1.0e5f, &layout))) {
+            continue;
+        }
+        DWRITE_TEXT_METRICS tm{};
+        layout->GetMetrics(&tm);
+        const float width = tm.widthIncludingTrailingWhitespace;
+        float left = item.x - width * 0.5f;
+        if (item.align == Diagram::TextAlign::Left) left = item.x;
+        if (item.align == Diagram::TextAlign::Right) left = item.x - width;
+        visual->texts[i] = DiagramText{std::move(layout), D2D1::Point2F(left, item.y - tm.height * 0.5f)};
+    }
+    return visual;
+}
+
+bool LayoutEngine::LayoutDiagram(const Markdown::Block& block, const Context& ctx, float& currentY,
+                                 std::string& error) {
+    std::string source;
+    for (const auto& s : block.inlineContent) {
+        source.append(s.text);
+    }
+
+    auto [it, inserted] = m_diagramCache.try_emplace(source);
+    CachedDiagram& entry = it->second;
+    if (inserted) {
+        entry.visual = BuildDiagram(source, entry.error);
+    }
+    entry.used = true;
+    if (!entry.visual) {
+        error = entry.error;
+        return false;
+    }
+
+    // Wide diagrams shrink to the reading column; narrow ones keep their natural size, centred.
+    const Diagram::Scene& scene = *entry.visual->scene;
+    const float scale = (std::min)(1.0f, ctx.width / (std::max)(1.0f, scene.width));
+    const float width = scene.width * scale;
+    const float height = std::ceil(scene.height * scale);
+
+    LayoutBlock lb{};
+    lb.type = Markdown::BlockType::CodeBlock;
+    lb.info = block.info;
+    lb.quoteDepth = ctx.quoteDepth;
+    lb.startLine = block.startLine;
+    lb.endLine = block.endLine;
+    lb.codeText = std::move(source);
+    lb.diagram = entry.visual;
+    lb.diagramScale = scale;
+    lb.diagramOrigin = D2D1::Point2F(std::floor(ctx.x + (ctx.width - width) * 0.5f), currentY);
+    lb.bounds = D2D1::RectF(ctx.x, currentY, ctx.x + ctx.width, currentY + height);
+    m_blocks.push_back(std::move(lb));
+
+    currentY += height;
+    return true;
 }
 
 void LayoutEngine::LayoutThematicBreak(const Markdown::Block& block, const Context& ctx, float& currentY) {

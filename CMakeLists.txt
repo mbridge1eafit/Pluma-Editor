@@ -73,6 +73,19 @@ set(PLUMA_SOURCES
     src/markdown/md4c_adapter.cpp
     src/markdown/parse_worker.h
     src/markdown/parse_worker.cpp
+    src/diagram/diagram_scene.h
+    src/diagram/diagram_scene.cpp
+    src/diagram/graph_layout.h
+    src/diagram/graph_layout.cpp
+    src/diagram/mermaid.h
+    src/diagram/mermaid.cpp
+    src/diagram/mermaid_internal.h
+    src/diagram/mermaid_common.cpp
+    src/diagram/mermaid_flowchart.cpp
+    src/diagram/mermaid_sequence.cpp
+    src/diagram/mermaid_pie.cpp
+    src/diagram/svg_writer.h
+    src/diagram/svg_writer.cpp
     src/preview/preview_layout.h
     src/preview/preview_layout.cpp
     src/preview/preview_renderer.h

@@ -1,8 +1,14 @@
 #include <gtest/gtest.h>
+#include <d2d1.h>
 #include <dwrite.h>
+#include <wincodec.h>
 #include <wrl/client.h>
 
+#include <cmath>
+#include <cstdlib>
+
 #include "preview/preview_layout.h"
+#include "preview/preview_renderer.h"
 #include "markdown/md4c_adapter.h"
 
 using namespace Pluma::Preview;
@@ -230,4 +236,122 @@ TEST_F(PreviewLayoutFixture, LinksAndCodeGetColorEffects) {
     ASSERT_EQ(effects.size(), 2u);
     EXPECT_EQ(effects[0].effect, TextEffect::Link);
     EXPECT_EQ(effects[1].effect, TextEffect::Code);
+}
+
+namespace {
+
+const char* kMermaidDoc =
+    "Texto\n\n"
+    "```mermaid\n"
+    "graph LR\n"
+    "  A[Inicio] --> B{Decidir} -->|Si| C[Una etiqueta bastante larga para forzar el ancho]\n"
+    "  C --> D[Fin] --> E[Otro nodo] --> F[Y otro mas]\n"
+    "```\n\n"
+    "Despues\n";
+
+const LayoutBlock* FindDiagram(const LayoutEngine& engine) {
+    for (const auto& b : engine.GetBlocks()) {
+        if (b.diagram) return &b;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST_F(PreviewLayoutFixture, MermaidBlocksRenderAsDiagrams) {
+    auto tree = Md4cAdapter::Parse(kMermaidDoc);
+    engine.ComputeLayout(*tree, 1200.0f, 96, PreviewThemeColors::Light());
+    const LayoutBlock* block = FindDiagram(engine);
+    ASSERT_NE(block, nullptr);
+    EXPECT_EQ(block->type, BlockType::CodeBlock);
+    EXPECT_EQ(block->startLine, 3);
+    ASSERT_TRUE(block->diagram->scene);
+    const auto& scene = *block->diagram->scene;
+    ASSERT_EQ(block->diagram->texts.size(), scene.items.size());
+    size_t labels = 0;
+    for (size_t i = 0; i < scene.items.size(); ++i) {
+        if (scene.items[i].kind == Pluma::Diagram::PrimitiveKind::Text) {
+            EXPECT_NE(block->diagram->texts[i].layout, nullptr);
+            ++labels;
+        }
+    }
+    EXPECT_GE(labels, 7u);
+
+    // The layout is reused while the source does not change.
+    const auto* visual = block->diagram.get();
+    engine.ComputeLayout(*tree, 1000.0f, 96, PreviewThemeColors::Dark());
+    ASSERT_NE(FindDiagram(engine), nullptr);
+    EXPECT_EQ(FindDiagram(engine)->diagram.get(), visual);
+
+    // Narrow viewports scale the diagram down to the column.
+    engine.ComputeLayout(*tree, 360.0f, 96, PreviewThemeColors::Light());
+    block = FindDiagram(engine);
+    ASSERT_NE(block, nullptr);
+    EXPECT_LT(block->diagramScale, 1.0f);
+    EXPECT_GE(block->diagramOrigin.x, block->bounds.left - 0.5f);
+    EXPECT_LE(block->diagramOrigin.x + scene.width * block->diagramScale, block->bounds.right + 0.5f);
+    EXPECT_NEAR(block->bounds.bottom - block->bounds.top, std::ceil(scene.height * block->diagramScale), 0.01f);
+}
+
+TEST_F(PreviewLayoutFixture, InvalidMermaidFallsBackToCodeWithReason) {
+    auto tree = Md4cAdapter::Parse("```mermaid\ngraph TD\n  A[sin cerrar --> B\n```\n");
+    engine.ComputeLayout(*tree, 800.0f, 96, PreviewThemeColors::Light());
+    ASSERT_EQ(engine.GetBlocks().size(), 1u);
+    const LayoutBlock& block = engine.GetBlocks()[0];
+    EXPECT_EQ(block.diagram, nullptr);
+    EXPECT_NE(block.textLayout, nullptr);
+    ASSERT_NE(block.labelLayout, nullptr);
+    DWRITE_TEXT_METRICS tm{};
+    block.labelLayout->GetMetrics(&tm);
+    EXPECT_GT(tm.width, 100.0f); // "mermaid — Falta el cierre..."
+}
+
+TEST_F(PreviewLayoutFixture, MermaidDiagramIsPaintedOffscreen) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); // S_FALSE when already initialised
+    ComPtr<IWICImagingFactory> wic;
+    ASSERT_TRUE(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                           IID_PPV_ARGS(&wic))));
+    ComPtr<ID2D1Factory> d2d;
+    ASSERT_TRUE(SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2d.GetAddressOf())));
+
+    auto tree = Md4cAdapter::Parse(kMermaidDoc);
+    for (const bool dark : {false, true}) {
+        const PreviewThemeColors colors = dark ? PreviewThemeColors::Dark() : PreviewThemeColors::Light();
+        engine.ComputeLayout(*tree, 900.0f, 96, colors);
+        const LayoutBlock* block = FindDiagram(engine);
+        ASSERT_NE(block, nullptr);
+
+        const UINT width = 900;
+        const UINT height = static_cast<UINT>(std::ceil(engine.GetTotalHeight()));
+        ComPtr<IWICBitmap> bitmap;
+        ASSERT_TRUE(SUCCEEDED(wic->CreateBitmap(width, height, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap)));
+        ComPtr<ID2D1RenderTarget> rt;
+        ASSERT_TRUE(SUCCEEDED(d2d->CreateWicBitmapRenderTarget(bitmap.Get(), D2D1::RenderTargetProperties(), &rt)));
+
+        PreviewRenderer renderer;
+        ASSERT_TRUE(renderer.CreateResources(rt.Get(), colors));
+        rt->BeginDraw();
+        rt->Clear(colors.background);
+        renderer.Draw(rt.Get(), engine, 0.0f, static_cast<float>(height));
+        ASSERT_TRUE(SUCCEEDED(rt->EndDraw()));
+
+        // Count painted pixels inside the diagram area.
+        ComPtr<IWICBitmapLock> lock;
+        WICRect rect{0, 0, static_cast<INT>(width), static_cast<INT>(height)};
+        ASSERT_TRUE(SUCCEEDED(bitmap->Lock(&rect, WICBitmapLockRead, &lock)));
+        UINT stride = 0;
+        UINT size = 0;
+        BYTE* data = nullptr;
+        lock->GetStride(&stride);
+        lock->GetDataPointer(&size, &data);
+        const auto bg = static_cast<BYTE>(colors.background.r * 255.0f + 0.5f);
+        size_t painted = 0;
+        for (UINT y = static_cast<UINT>(block->bounds.top); y < static_cast<UINT>(block->bounds.bottom) && y < height; ++y) {
+            for (UINT x = 0; x < width; ++x) {
+                const BYTE* px = data + y * stride + x * 4;
+                if (std::abs(px[0] - bg) > 12 || std::abs(px[1] - bg) > 12 || std::abs(px[2] - bg) > 12) ++painted;
+            }
+        }
+        EXPECT_GT(painted, 3000u) << (dark ? "dark" : "light");
+    }
 }

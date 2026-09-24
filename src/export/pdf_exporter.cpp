@@ -1,4 +1,5 @@
 #include "pdf_exporter.h"
+#include "../diagram/mermaid.h"
 #include "../markdown/md4c_adapter.h"
 
 #include <algorithm>
@@ -749,7 +750,125 @@ private:
         }
     }
 
+    // --- Mermaid diagrams (vector) --------------------------------------------------
+
+    static Rgb ToRgb(uint32_t rgb) {
+        return Rgb{static_cast<float>((rgb >> 16) & 0xFF) / 255.0f, static_cast<float>((rgb >> 8) & 0xFF) / 255.0f,
+                   static_cast<float>(rgb & 0xFF) / 255.0f};
+    }
+
+    // Closed rounded rectangle path; (x, y) is the bottom-left corner in PDF space.
+    void RoundedRectPath(float x, float y, float w, float h, float r) {
+        r = (std::min)({r, w * 0.5f, h * 0.5f});
+        const float k = 0.5523f * r;
+        auto& out = Out();
+        out << (x + r) << ' ' << y << " m " << (x + w - r) << ' ' << y << " l "
+            << (x + w - r + k) << ' ' << y << ' ' << (x + w) << ' ' << (y + r - k) << ' ' << (x + w) << ' ' << (y + r) << " c "
+            << (x + w) << ' ' << (y + h - r) << " l "
+            << (x + w) << ' ' << (y + h - r + k) << ' ' << (x + w - r + k) << ' ' << (y + h) << ' ' << (x + w - r) << ' ' << (y + h) << " c "
+            << (x + r) << ' ' << (y + h) << " l "
+            << (x + r - k) << ' ' << (y + h) << ' ' << x << ' ' << (y + h - r + k) << ' ' << x << ' ' << (y + h - r) << " c "
+            << x << ' ' << (y + r) << " l "
+            << x << ' ' << (y + r - k) << ' ' << (x + r - k) << ' ' << y << ' ' << (x + r) << ' ' << y << " c h\n";
+    }
+
+    void EllipsePath(float cx, float cy, float rx, float ry) {
+        const float kx = 0.5523f * rx;
+        const float ky = 0.5523f * ry;
+        Out() << (cx + rx) << ' ' << cy << " m "
+              << (cx + rx) << ' ' << (cy + ky) << ' ' << (cx + kx) << ' ' << (cy + ry) << ' ' << cx << ' ' << (cy + ry) << " c "
+              << (cx - kx) << ' ' << (cy + ry) << ' ' << (cx - rx) << ' ' << (cy + ky) << ' ' << (cx - rx) << ' ' << cy << " c "
+              << (cx - rx) << ' ' << (cy - ky) << ' ' << (cx - kx) << ' ' << (cy - ry) << ' ' << cx << ' ' << (cy - ry) << " c "
+              << (cx + kx) << ' ' << (cy - ry) << ' ' << (cx + rx) << ' ' << (cy - ky) << ' ' << (cx + rx) << ' ' << cy << " c h\n";
+    }
+
+    // Draws a ```mermaid block as a vector diagram; false when the source cannot be rendered.
+    bool RenderDiagram(const Markdown::Block& block, const Ctx& ctx, bool first) {
+        std::string source;
+        for (const auto& s : block.inlineContent) source += s.text;
+        const Diagram::MermaidResult result = Diagram::RenderMermaid(
+            source, [](std::string_view text, float size, bool bold) {
+                return MeasureAnsi(ToWinAnsi(text), bold ? kHelveticaBold : kHelvetica, size);
+            });
+        if (!result.scene) return false;
+        const Diagram::Scene& scene = *result.scene;
+
+        // Diagram units are DIPs (1/96 in); 0.72 keeps labels close to the 10 pt body text.
+        const float scale = (std::min)({0.72f, ctx.width / scene.width, (m_top - m_bottom) / scene.height});
+        const float width = scene.width * scale;
+        const float height = scene.height * scale;
+        if (!first) Gap(8.0f, ctx);
+        EnsureSpace(height);
+
+        const float ox = ctx.x + (ctx.width - width) * 0.5f;
+        const float oy = m_y;
+        auto px = [&](float x) { return ox + x * scale; };
+        auto py = [&](float y) { return oy - y * scale; };
+        const Diagram::Palette palette = Diagram::Palette::Light();
+        auto& out = Out();
+
+        for (const auto& p : scene.items) {
+            const bool fill = !p.fill.IsNone();
+            const bool stroke = !p.stroke.IsNone();
+            if (p.kind == Diagram::PrimitiveKind::Text) {
+                const int font = p.bold ? kHelveticaBold : kHelvetica;
+                const float size = p.fontSize * scale;
+                const std::string ansi = ToWinAnsi(p.text);
+                const float textWidth = MeasureAnsi(ansi, font, size);
+                float x = px(p.x) - textWidth * 0.5f;
+                if (p.align == Diagram::TextAlign::Left) x = px(p.x);
+                if (p.align == Diagram::TextAlign::Right) x = px(p.x) - textWidth;
+                const Rgb c = ToRgb(palette.Resolve(p.fill));
+                out << "BT /F" << font << ' ' << size << " Tf " << c.r << ' ' << c.g << ' ' << c.b << " rg " << x << ' '
+                    << (py(p.y) - size * 0.35f) << " Td (" << EscapePdf(ansi) << ") Tj ET\n";
+                continue;
+            }
+            if (!fill && !stroke) continue;
+
+            out << "q ";
+            if (fill) {
+                const Rgb c = ToRgb(palette.Resolve(p.fill));
+                out << c.r << ' ' << c.g << ' ' << c.b << " rg ";
+            }
+            if (stroke) {
+                const Rgb c = ToRgb(palette.Resolve(p.stroke));
+                out << c.r << ' ' << c.g << ' ' << c.b << " RG " << (p.strokeWidth * scale) << " w 1 j ";
+                if (p.lineStyle == Diagram::LineStyle::Dashed) out << "[3.5 2.8] 0 d ";
+                if (p.lineStyle == Diagram::LineStyle::Dotted) out << "[1 2] 0 d ";
+            }
+            out << '\n';
+
+            switch (p.kind) {
+            case Diagram::PrimitiveKind::Rect:
+                if (p.radius > 0.0f) {
+                    RoundedRectPath(px(p.x), py(p.y + p.h), p.w * scale, p.h * scale, p.radius * scale);
+                } else {
+                    out << px(p.x) << ' ' << py(p.y + p.h) << ' ' << (p.w * scale) << ' ' << (p.h * scale) << " re\n";
+                }
+                break;
+            case Diagram::PrimitiveKind::Ellipse:
+                EllipsePath(px(p.x), py(p.y), p.w * scale, p.h * scale);
+                break;
+            case Diagram::PrimitiveKind::Path:
+                out << px(p.start.x) << ' ' << py(p.start.y) << " m";
+                for (const auto& seg : p.segments) {
+                    out << ' ' << px(seg.c1.x) << ' ' << py(seg.c1.y) << ' ' << px(seg.c2.x) << ' ' << py(seg.c2.y) << ' '
+                        << px(seg.end.x) << ' ' << py(seg.end.y) << " c";
+                }
+                out << (p.closed ? " h\n" : "\n");
+                break;
+            default:
+                break;
+            }
+            out << (fill && stroke ? "B" : (fill ? "f" : "S")) << " Q\n";
+        }
+
+        Advance(height, ctx);
+        return true;
+    }
+
     void RenderCode(const Markdown::Block& block, const Ctx& ctx, bool first) {
+        if (Diagram::IsMermaidLanguage(block.info) && RenderDiagram(block, ctx, first)) return;
         if (!first) Gap(8.0f, ctx);
         const float size = 8.8f;
         const float leading = 12.0f;

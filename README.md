@@ -74,5 +74,6 @@ Para ejecutar la medición automatizada del arranque en frío (NF-01):
 - **Editor:** Scintilla 5.5.3 + Lexilla 5.4.3 (enlazados estáticamente, en `third_party/`).
 - **Parser Markdown:** md4c 0.5.2 (CommonMark 0.31 + GFM, en `third_party/md4c`).
 - **Renderizado de vista previa:** Direct2D y DirectWrite nativos.
+- **Diagramas Mermaid:** motor nativo propio (`src/diagram/`) para `flowchart`/`graph`, `sequenceDiagram`, `stateDiagram` y `pie`; se dibujan en la vista previa (Direct2D), como SVG inline en HTML y como vectores en PDF. Los demás tipos se muestran como código con un aviso.
 - **Acceso a Win32:** API Unicode (`W`), Per-Monitor DPI Aware v2, tema oscuro vía DWM.
 - **Sin runtimes externos:** Solamente DLLs nativas del sistema operativo de Windows.
