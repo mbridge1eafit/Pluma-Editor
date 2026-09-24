@@ -143,3 +143,18 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
 - **Alternativas descartadas:**
   - *Scroll horizontal por tabla:* complejo de implementar con Win32 puro y menos cómodo que ajustar el contenido al ancho disponible.
   - *Decodificar imágenes con WIC en la vista previa:* aumenta el coste de arranque y memoria; se muestra un marcador clicable con el texto alternativo que abre la imagen.
+
+---
+
+## [2026-09-24] Decisión 011: Preferencias persistentes, panel de encabezados y editor predeterminado
+
+- **Contexto:** El usuario necesita adaptar Pluma a sus preferencias sin recompilar, navegar documentos largos con un esquema siempre visible y abrir los archivos `.md` con Pluma desde el Explorador.
+- **Decisión:**
+  - *Configuración (`src/config/settings.*`):* archivo INI UTF-8 en `%APPDATA%\Pluma\pluma.ini`, o `pluma.ini` junto al ejecutable si existe (modo portable). Parser y serializador propios, puros y probados; los valores fuera de rango se acotan y los inválidos conservan el valor por defecto. Se guarda de forma atómica (`WriteDocumentAtomic`) al cerrar y al aceptar/aplicar el diálogo. Incluye tema, fuente y tamaño del editor, zoom de la vista previa, ajuste de línea, números de línea, línea actual, tabulación, fin de línea de documentos nuevos, vista inicial, panel de encabezados, barra de estado, scroll sincronizado, posición de ventana, reabrir el último documento y opciones de exportación PDF/HTML.
+  - *Diálogo «Preferencias» (`Configuración > Preferencias…`, `Ctrl+,`):* plantilla `DIALOGEX` (escalado DPI automático del sistema) con aplicación en vivo (`Aplicar`). En modo oscuro las casillas se pintan vía `NM_CUSTOMDRAW`, porque las casillas con tema ignoran el color de texto de `WM_CTLCOLORSTATIC`.
+  - *Zoom de la vista previa:* se aplica como escala de DPI del render target Direct2D; el diseño y el texto crecen de forma uniforme sin tocar el motor de layout.
+  - *Panel de encabezados (`src/outline/outline_panel.*`, `Ver > Panel de encabezados`, `Ctrl+Shift+E`):* panel lateral izquierdo redimensionable con un `TreeView` jerárquico alimentado por el árbol del parseo asíncrono (sin parseo adicional). Si solo cambian los títulos se editan en su sitio, sin reconstruir ni perder el desplazamiento. Resalta la sección del cursor y navega con clic o teclado.
+  - *Editor predeterminado (`Configuración > Establecer como editor predeterminado de Markdown…`):* registra en `HKCU` (sin elevación) el ProgID `Pluma.Markdown`, `OpenWithProgids`, `Applications\pluma.exe` y las *Capabilities* de `RegisteredApplications`. Windows 10/11 protege la elección del usuario (`UserChoice` con hash), así que la confirmación se hace con el selector del sistema (`SHOpenWithDialog`), con alternativa a `ms-settings:defaultapps`.
+- **Alternativas descartadas:**
+  - *Registro de Windows para las preferencias:* menos transparente para el usuario e incompatible con el modo portable.
+  - *Escribir `UserChoice` directamente:* Windows invalida la entrada (hash) y restablece la asociación; no es un mecanismo soportado.

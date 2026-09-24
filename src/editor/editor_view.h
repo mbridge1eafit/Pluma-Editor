@@ -113,6 +113,13 @@ public:
     // Markdown lexer styling for Light / Dark mode (M1.3, F-05, F-09)
     void ApplyTheme(bool darkMode);
 
+    // User preferences. An empty or missing font name selects the automatic font
+    // (Cascadia Code, Cascadia Mono or Consolas).
+    void SetFont(std::wstring_view faceName, int sizePoints);
+    void SetShowLineNumbers(bool show);
+    void SetHighlightCurrentLine(bool highlight);
+    void SetTabSettings(int width, bool useTabs);
+
     // Resizes the line number margin when the number of digits changes
     void UpdateLineNumberMargin();
 
@@ -125,6 +132,12 @@ private:
     sptr_t m_ptrDirect = 0;
     bool m_isDarkMode = false;
     bool m_wordWrap = true;
+    bool m_showLineNumbers = true;
+    bool m_highlightCurrentLine = true;
+    int m_tabWidth = 4;
+    bool m_useTabs = false;
+    std::string m_fontName; // UTF-8; empty = automatic
+    int m_fontSize = 11;
     int m_marginDigits = 0;
 };
 

@@ -47,6 +47,14 @@ add_subdirectory(third_party)
 # ==============================================================================
 set(PLUMA_SOURCES
     src/app/main.cpp
+    src/app/settings_dialog.h
+    src/app/settings_dialog.cpp
+    src/config/settings.h
+    src/config/settings.cpp
+    src/outline/outline_panel.h
+    src/outline/outline_panel.cpp
+    src/platform/file_association.h
+    src/platform/file_association.cpp
     src/platform/dpi.h
     src/platform/dpi.cpp
     src/platform/theme.h
@@ -108,6 +116,7 @@ target_link_libraries(pluma PRIVATE
     windowscodecs
     dwmapi
     shell32
+    shlwapi
     comdlg32
     ole32
     imm32

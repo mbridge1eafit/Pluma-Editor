@@ -63,6 +63,8 @@ BEGIN
     "C",            IDM_FORMAT_CODE,        VIRTKEY, CONTROL, SHIFT
     "X",            IDM_FORMAT_STRIKE,      VIRTKEY, CONTROL, SHIFT
     "O",            IDM_VIEW_OUTLINE,       VIRTKEY, CONTROL, SHIFT
+    "E",            IDM_VIEW_OUTLINE_PANEL, VIRTKEY, CONTROL, SHIFT
+    VK_OEM_COMMA,   IDM_SETTINGS_PREFERENCES, VIRTKEY, CONTROL
 END
 
 // Menu (Spanish Default)
@@ -122,12 +124,77 @@ BEGIN
             MENUITEM "Modo &claro",             IDM_VIEW_THEME_LIGHT
         END
         MENUITEM SEPARATOR
+        MENUITEM "&Panel de encabezados\tCtrl+Shift+E", IDM_VIEW_OUTLINE_PANEL
+        MENUITEM "&Barra de estado",             IDM_VIEW_STATUSBAR
         MENUITEM "&Esquema de encabezados...\tCtrl+Shift+O", IDM_VIEW_OUTLINE
+    END
+    POPUP "&Configuración"
+    BEGIN
+        MENUITEM "&Preferencias...\tCtrl+,",     IDM_SETTINGS_PREFERENCES
+        MENUITEM SEPARATOR
+        MENUITEM "Establecer como editor pre&determinado de Markdown...", IDM_SETTINGS_DEFAULT_EDITOR
     END
     POPUP "A&yuda"
     BEGIN
         MENUITEM "&Acerca de Pluma...",          IDM_HELP_ABOUT
     END
+END
+
+// Preferences dialog
+LANGUAGE LANG_SPANISH, SUBLANG_DEFAULT
+IDD_SETTINGS DIALOGEX 0, 0, 420, 258
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Preferencias"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    // Left column: appearance and editor
+    LTEXT           "Apariencia", IDC_SET_HEADER_APPEARANCE, 12, 8, 188, 10
+    LTEXT           "Tema:", IDC_STATIC, 12, 24, 78, 8
+    COMBOBOX        IDC_SET_THEME, 92, 22, 108, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Fuente del editor:", IDC_STATIC, 12, 40, 78, 8
+    COMBOBOX        IDC_SET_FONT, 92, 38, 108, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Tamaño de fuente:", IDC_STATIC, 12, 56, 78, 8
+    COMBOBOX        IDC_SET_FONTSIZE, 92, 54, 50, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Zoom de vista previa:", IDC_STATIC, 12, 72, 78, 8
+    COMBOBOX        IDC_SET_ZOOM, 92, 70, 50, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+
+    LTEXT           "Editor", IDC_SET_HEADER_EDITOR, 12, 94, 188, 10
+    CONTROL         "&Ajuste de línea", IDC_SET_WORDWRAP, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 108, 188, 10
+    CONTROL         "Mostrar &números de línea", IDC_SET_LINENUMBERS, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 120, 188, 10
+    CONTROL         "Resaltar &la línea actual", IDC_SET_CURRENTLINE, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 132, 188, 10
+    CONTROL         "Insertar &tabulaciones en lugar de espacios", IDC_SET_USETABS, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 144, 188, 10
+    LTEXT           "Ancho de tabulación:", IDC_STATIC, 12, 160, 78, 8
+    COMBOBOX        IDC_SET_TABWIDTH, 92, 158, 50, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Fin de línea (nuevos):", IDC_STATIC, 12, 176, 78, 8
+    COMBOBOX        IDC_SET_EOL, 92, 174, 108, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+
+    // Right column: window, view and export
+    LTEXT           "Ventana y vista", IDC_SET_HEADER_VIEW, 220, 8, 188, 10
+    LTEXT           "Vista al iniciar:", IDC_STATIC, 220, 24, 80, 8
+    COMBOBOX        IDC_SET_STARTVIEW, 302, 22, 106, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Mostrar el panel de &encabezados", IDC_SET_OUTLINE, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 40, 188, 10
+    CONTROL         "Mostrar la &barra de estado", IDC_SET_STATUSBAR, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 52, 188, 10
+    CONTROL         "Desplazamiento &sincronizado editor / vista previa", IDC_SET_SYNCSCROLL, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 64, 188, 10
+    CONTROL         "Recordar tamaño y posición de la &ventana", IDC_SET_REMEMBERWINDOW, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 76, 188, 10
+    CONTROL         "Reabrir el último &documento al iniciar", IDC_SET_REOPENLAST, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 88, 188, 10
+
+    LTEXT           "Exportación", IDC_SET_HEADER_EXPORT, 220, 110, 188, 10
+    LTEXT           "Tamaño de página PDF:", IDC_STATIC, 220, 126, 80, 8
+    COMBOBOX        IDC_SET_PDFPAGE, 302, 124, 106, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Márgenes del PDF:", IDC_STATIC, 220, 142, 80, 8
+    COMBOBOX        IDC_SET_PDFMARGIN, 302, 140, 50, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Tema del HTML:", IDC_STATIC, 220, 158, 80, 8
+    COMBOBOX        IDC_SET_HTMLTHEME, 302, 156, 106, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+
+    // Windows integration
+    LTEXT           "Integración con Windows", IDC_SET_HEADER_WINDOWS, 12, 198, 396, 10
+    LTEXT           "", IDC_SET_ASSOC_STATUS, 12, 214, 250, 8
+    PUSHBUTTON      "Establecer como &predeterminado...", IDC_SET_ASSOC_BUTTON, 268, 211, 140, 14
+
+    PUSHBUTTON      "&Restablecer valores", IDC_SET_RESET, 12, 236, 90, 14
+    DEFPUSHBUTTON   "Aceptar", IDOK, 248, 236, 50, 14
+    PUSHBUTTON      "Cancelar", IDCANCEL, 302, 236, 50, 14
+    PUSHBUTTON      "Apl&icar", IDC_SET_APPLY, 356, 236, 52, 14
 END
 
 // String Tables (Spanish)

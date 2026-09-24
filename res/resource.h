@@ -40,7 +40,47 @@
 #define IDM_FORMAT_STRIKE               40054
 #define IDM_FORMAT_LINK                 40055
 
+#define IDM_VIEW_OUTLINE_PANEL          40035
+#define IDM_VIEW_STATUSBAR              40036
+
+#define IDM_SETTINGS_PREFERENCES        40071
+#define IDM_SETTINGS_DEFAULT_EDITOR     40072
+
 #define IDM_HELP_ABOUT                  40041
+
+// Preferences dialog
+#ifndef IDC_STATIC
+#define IDC_STATIC                      (-1)
+#endif
+#define IDD_SETTINGS                    200
+#define IDC_SET_THEME                   2001
+#define IDC_SET_FONT                    2002
+#define IDC_SET_FONTSIZE                2003
+#define IDC_SET_ZOOM                    2004
+#define IDC_SET_WORDWRAP                2005
+#define IDC_SET_LINENUMBERS             2006
+#define IDC_SET_CURRENTLINE             2007
+#define IDC_SET_USETABS                 2008
+#define IDC_SET_TABWIDTH                2009
+#define IDC_SET_EOL                     2010
+#define IDC_SET_STARTVIEW               2011
+#define IDC_SET_OUTLINE                 2012
+#define IDC_SET_STATUSBAR               2013
+#define IDC_SET_SYNCSCROLL              2014
+#define IDC_SET_REMEMBERWINDOW          2015
+#define IDC_SET_REOPENLAST              2016
+#define IDC_SET_PDFPAGE                 2017
+#define IDC_SET_PDFMARGIN               2018
+#define IDC_SET_HTMLTHEME               2019
+#define IDC_SET_ASSOC_STATUS            2020
+#define IDC_SET_ASSOC_BUTTON            2021
+#define IDC_SET_RESET                   2022
+#define IDC_SET_APPLY                   2023
+#define IDC_SET_HEADER_APPEARANCE       2031
+#define IDC_SET_HEADER_EDITOR           2032
+#define IDC_SET_HEADER_VIEW             2033
+#define IDC_SET_HEADER_EXPORT           2034
+#define IDC_SET_HEADER_WINDOWS          2035
 
 // String IDs
 #define IDS_APP_TITLE                   1001

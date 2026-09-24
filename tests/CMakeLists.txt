@@ -22,6 +22,12 @@ set(UNIT_TEST_SOURCES
     unit/test_sync_scroll.cpp
     unit/test_html_exporter.cpp
     unit/test_pdf_exporter.cpp
+    unit/test_settings.cpp
+    unit/test_outline.cpp
+    ../src/config/settings.cpp
+    ../src/config/settings.h
+    ../src/outline/outline_panel.cpp
+    ../src/outline/outline_panel.h
     ../src/platform/dpi.cpp
     ../src/platform/dpi.h
     ../src/platform/theme.cpp
@@ -77,6 +83,8 @@ target_link_libraries(unit_tests PRIVATE
     gdi32
     imm32
     ole32
+    shell32
+    comctl32
     uuid
 )
 

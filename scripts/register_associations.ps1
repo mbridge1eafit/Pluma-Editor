@@ -37,8 +37,11 @@ if (-not (Test-Path $PlumaExePath)) {
 }
 
 $rootDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$iconPath = Join-Path $rootDir "res\icons\doc_md.ico"
-$iconRef = if (Test-Path $iconPath) { $iconPath } else { "$PlumaExePath,1" }
+$iconPath = Join-Path $rootDir "markdown.ico"
+if (-not (Test-Path $iconPath)) {
+    $iconPath = Join-Path $rootDir "res\icons\doc_md.ico"
+}
+$iconRef = if (Test-Path $iconPath) { (Resolve-Path $iconPath).Path } else { "$PlumaExePath,1" }
 
 Write-Host "Registrando asociaciones para Pluma..." -ForegroundColor Cyan
 Write-Host "  Ejecutable: $PlumaExePath"

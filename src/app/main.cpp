@@ -24,6 +24,10 @@
 #include "../sync/sync_scroll.h"
 #include "../export/html_exporter.h"
 #include "../export/pdf_exporter.h"
+#include "../config/settings.h"
+#include "../outline/outline_panel.h"
+#include "../platform/file_association.h"
+#include "settings_dialog.h"
 #include "../../res/resource.h"
 
 namespace {
@@ -37,15 +41,6 @@ constexpr size_t kOutlineMaxItems = 1000;
 UINT g_uFindReplaceMsg = 0;
 bool g_firstPaintSignaled = false;
 
-std::wstring Utf8ToUtf16(std::string_view utf8) {
-    if (utf8.empty()) return {};
-    int count = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    if (count <= 0) return {};
-    std::wstring result(count, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), result.data(), count);
-    return result;
-}
-
 std::string Utf16ToUtf8(std::wstring_view utf16) {
     if (utf16.empty()) return {};
     int count = WideCharToMultiByte(CP_UTF8, 0, utf16.data(), static_cast<int>(utf16.size()), nullptr, 0, nullptr, nullptr);
@@ -55,10 +50,13 @@ std::string Utf16ToUtf8(std::wstring_view utf16) {
     return result;
 }
 
-enum class ViewMode {
-    EditorOnly,
-    Split,
-    PreviewOnly
+using ViewMode = Pluma::Config::ViewLayout;
+
+// Draggable dividers of the main window.
+enum class Divider {
+    None,
+    Outline, // Between the headings panel and the editor
+    Split    // Between the editor and the preview
 };
 
 static HANDLE g_hStartupEvent = nullptr;
@@ -84,6 +82,12 @@ public:
 
     bool Create(int nShowCmd, const std::filesystem::path& initialFile = {}) {
         m_hSizeWeCursor = LoadCursorW(nullptr, IDC_SIZEWE);
+
+        m_settingsPath = Pluma::Config::DefaultSettingsPath();
+        m_settings = Pluma::Config::LoadSettings(m_settingsPath);
+        m_appTheme = m_settings.theme;
+        m_viewMode = m_settings.InitialView();
+        m_splitRatio = m_settings.splitRatio;
 
         WNDCLASSEXW wcex{};
         wcex.cbSize = sizeof(WNDCLASSEXW);
@@ -130,11 +134,31 @@ public:
         // Setup drag and drop (F-01, M1.5)
         DragAcceptFiles(m_hwnd, TRUE);
 
+        // Previous size and position; SetWindowPlacement keeps the window on a connected monitor.
+        if (m_settings.rememberWindow && m_settings.hasWindowRect) {
+            WINDOWPLACEMENT wp{sizeof(wp)};
+            wp.showCmd = SW_HIDE;
+            wp.rcNormalPosition = RECT{m_settings.windowX, m_settings.windowY,
+                                       m_settings.windowX + m_settings.windowWidth,
+                                       m_settings.windowY + m_settings.windowHeight};
+            SetWindowPlacement(m_hwnd, &wp);
+            if (m_settings.windowMaximized && (nShowCmd == SW_SHOWNORMAL || nShowCmd == SW_SHOWDEFAULT)) {
+                nShowCmd = SW_SHOWMAXIMIZED;
+            }
+        }
+
         ShowWindow(m_hwnd, nShowCmd);
         UpdateWindow(m_hwnd);
 
-        if (!initialFile.empty()) {
-            OpenFile(initialFile);
+        std::filesystem::path fileToOpen = initialFile;
+        if (fileToOpen.empty() && m_settings.reopenLastFile && !m_settings.lastFile.empty()) {
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(m_settings.lastFile, ec)) {
+                fileToOpen = m_settings.lastFile;
+            }
+        }
+        if (!fileToOpen.empty()) {
+            OpenFile(fileToOpen);
         } else {
             UpdateTitle();
         }
@@ -307,7 +331,7 @@ public:
                     Pluma::Export::HtmlExportOptions options;
                     // path::string() uses the ANSI code page and throws on characters it cannot represent.
                     options.title = m_currentPath.empty() ? "Documento Pluma" : Utf16ToUtf8(m_currentPath.stem().wstring());
-                    options.theme = Pluma::Export::HtmlTheme::Auto;
+                    options.theme = m_settings.htmlTheme;
 
                     std::string markdown = m_editor.GetText();
                     bool success = Pluma::Export::HtmlExporter::ExportToFile(outPath, markdown, options);
@@ -355,8 +379,8 @@ public:
                     Pluma::Export::PdfExportOptions options;
                     // path::string() uses the ANSI code page and throws on characters it cannot represent.
                     options.title = m_currentPath.empty() ? "Documento Pluma" : Utf16ToUtf8(m_currentPath.stem().wstring());
-                    options.pageSize = Pluma::Export::PageSize::A4;
-                    options.marginMm = 20.0f;
+                    options.pageSize = m_settings.pdfPageSize;
+                    options.marginMm = static_cast<float>(m_settings.pdfMarginMm);
 
                     std::string markdown = m_editor.GetText();
                     bool success = Pluma::Export::PdfExporter::ExportMarkdownToFile(outPath, markdown, options);
@@ -411,7 +435,7 @@ public:
         }
         m_currentPath.clear();
         m_encoding = Pluma::IO::Encoding::Utf8;
-        m_lineEnding = Pluma::IO::LineEnding::CRLF;
+        m_lineEnding = m_settings.newFileLineEnding;
         m_hasBom = false;
         m_editor.SetEolMode(ToScintillaEol(m_lineEnding));
         m_editor.SetText("");
@@ -474,49 +498,94 @@ public:
         }
     }
 
+    struct Layout {
+        RECT outline{};        // Empty when the headings panel is hidden
+        RECT outlineDivider{};
+        RECT editor{};         // Empty in "preview only"
+        RECT splitDivider{};   // Empty unless in split view
+        RECT preview{};        // Empty in "editor only"
+    };
+
+    // Positions of the panels in client coordinates (status bar excluded).
+    Layout ComputeLayout() const {
+        Layout layout;
+        RECT rc{};
+        GetClientRect(m_hwnd, &rc);
+        const int w = rc.right - rc.left;
+        int h = rc.bottom - rc.top;
+        if (m_hwndStatusBar && IsWindowVisible(m_hwndStatusBar)) {
+            RECT rcSB{};
+            GetWindowRect(m_hwndStatusBar, &rcSB);
+            h -= rcSB.bottom - rcSB.top;
+        }
+        h = (std::max)(10, h);
+        if (w <= 0) return layout;
+
+        const int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
+        int contentX = 0;
+        if (m_settings.showOutline) {
+            // The panel never squeezes the document below a usable width.
+            const int maxWidth = w - dividerW - Pluma::Platform::ScaleForDpi(160, m_dpi);
+            const int outlineW = (std::min)(Pluma::Platform::ScaleForDpi(m_settings.outlineWidth, m_dpi), maxWidth);
+            if (outlineW >= Pluma::Platform::ScaleForDpi(80, m_dpi)) {
+                layout.outline = RECT{0, 0, outlineW, h};
+                layout.outlineDivider = RECT{outlineW, 0, outlineW + dividerW, h};
+                contentX = outlineW + dividerW;
+            }
+        }
+        const int contentW = (std::max)(1, w - contentX);
+
+        switch (m_viewMode) {
+        case ViewMode::EditorOnly:
+            layout.editor = RECT{contentX, 0, contentX + contentW, h};
+            break;
+        case ViewMode::PreviewOnly:
+            layout.preview = RECT{contentX, 0, contentX + contentW, h};
+            break;
+        case ViewMode::Split: {
+            int editorW = static_cast<int>((contentW - dividerW) * m_splitRatio);
+            editorW = (std::clamp)(editorW, 50, (std::max)(50, contentW - dividerW - 50));
+            const int dividerX = contentX + editorW;
+            layout.editor = RECT{contentX, 0, dividerX, h};
+            layout.splitDivider = RECT{dividerX, 0, dividerX + dividerW, h};
+            layout.preview = RECT{dividerX + dividerW, 0, (std::max)(dividerX + dividerW + 50, contentX + contentW), h};
+            break;
+        }
+        }
+        return layout;
+    }
+
+    Divider HitTestDivider(POINT pt) const {
+        const Layout layout = ComputeLayout();
+        if (PtInRect(&layout.splitDivider, pt)) return Divider::Split;
+        if (PtInRect(&layout.outlineDivider, pt)) return Divider::Outline;
+        return Divider::None;
+    }
+
+    static void PlaceWindow(HWND hwnd, const RECT& rc) {
+        if (IsRectEmpty(&rc)) {
+            ShowWindow(hwnd, SW_HIDE);
+        } else {
+            SetWindowPos(hwnd, nullptr, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+    }
+
     void RelayoutChildren() {
         if (!m_hwnd || !m_editor.GetHwnd() || !m_preview.GetHwnd()) return;
 
         RECT rc{};
         GetClientRect(m_hwnd, &rc);
-        int w = rc.right - rc.left;
-        int h = rc.bottom - rc.top;
-        if (w <= 0 || h <= 0) return;
+        if (rc.right - rc.left <= 0 || rc.bottom - rc.top <= 0) return;
 
-        int sbHeight = 0;
         if (m_hwndStatusBar && IsWindowVisible(m_hwndStatusBar)) {
             SendMessageW(m_hwndStatusBar, WM_SIZE, 0, 0);
-            RECT rcSB{};
-            GetWindowRect(m_hwndStatusBar, &rcSB);
-            sbHeight = rcSB.bottom - rcSB.top;
         }
-        h = (std::max)(10, h - sbHeight);
 
-        switch (m_viewMode) {
-        case ViewMode::EditorOnly:
-            m_editor.SetBounds(0, 0, w, h);
-            ShowWindow(m_editor.GetHwnd(), SW_SHOW);
-            ShowWindow(m_preview.GetHwnd(), SW_HIDE);
-            break;
-
-        case ViewMode::PreviewOnly:
-            ShowWindow(m_editor.GetHwnd(), SW_HIDE);
-            SetWindowPos(m_preview.GetHwnd(), nullptr, 0, 0, w, h, SWP_NOZORDER | SWP_SHOWWINDOW);
-            break;
-
-        case ViewMode::Split: {
-            int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
-            int editorW = static_cast<int>((w - dividerW) * m_splitRatio);
-            editorW = (std::clamp)(editorW, 50, (std::max)(50, w - dividerW - 50));
-            int previewX = editorW + dividerW;
-            int previewW = (std::max)(50, w - previewX);
-
-            m_editor.SetBounds(0, 0, editorW, h);
-            ShowWindow(m_editor.GetHwnd(), SW_SHOW);
-            SetWindowPos(m_preview.GetHwnd(), nullptr, previewX, 0, previewW, h, SWP_NOZORDER | SWP_SHOWWINDOW);
-            break;
-        }
-        }
+        const Layout layout = ComputeLayout();
+        if (m_outline.GetHwnd()) PlaceWindow(m_outline.GetHwnd(), layout.outline);
+        PlaceWindow(m_editor.GetHwnd(), layout.editor);
+        PlaceWindow(m_preview.GetHwnd(), layout.preview);
 
         HMENU hMenu = GetMenu(m_hwnd);
         if (hMenu) {
@@ -524,6 +593,10 @@ public:
             if (m_viewMode == ViewMode::EditorOnly) checkId = IDM_VIEW_EDITOR_ONLY;
             else if (m_viewMode == ViewMode::PreviewOnly) checkId = IDM_VIEW_PREVIEW_ONLY;
             CheckMenuRadioItem(hMenu, IDM_VIEW_EDITOR_ONLY, IDM_VIEW_PREVIEW_ONLY, checkId, MF_BYCOMMAND);
+            CheckMenuItem(hMenu, IDM_VIEW_OUTLINE_PANEL,
+                          MF_BYCOMMAND | (m_settings.showOutline ? MF_CHECKED : MF_UNCHECKED));
+            CheckMenuItem(hMenu, IDM_VIEW_STATUSBAR,
+                          MF_BYCOMMAND | (m_settings.showStatusBar ? MF_CHECKED : MF_UNCHECKED));
         }
 
         InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -598,30 +671,15 @@ public:
         HMENU hMenu = CreatePopupMenu();
         if (!hMenu) return;
 
+        // Parsed now (not the cached headings) so the menu reflects the latest keystrokes.
         std::string mdText = m_editor.GetText();
         auto tree = Pluma::Markdown::Md4cAdapter::Parse(mdText);
-
-        struct HeadingItem {
-            int line = 0;
-            int level = 0;
-            std::wstring title;
-
-            HeadingItem(int ln, int lvl, std::wstring t)
-                : line(ln), level(lvl), title(std::move(t)) {}
-        };
-        std::vector<HeadingItem> headings;
-
-        if (tree && tree->root) {
-            for (const auto& child : tree->root->children) {
-                if (headings.size() >= kOutlineMaxItems) break;
-                if (child && child->type == Pluma::Markdown::BlockType::Heading) {
-                    // Full visible text, including **bold**, `code` and [link] parts.
-                    std::wstring wTitle = Utf8ToUtf16(Pluma::Markdown::ExtractPlainText(child->inlineContent));
-                    if (wTitle.empty()) wTitle = L"(Sin título)";
-                    if (wTitle.size() > 80) wTitle = wTitle.substr(0, 79) + L"…";
-                    headings.emplace_back(child->startLine, child->level, std::move(wTitle));
-                }
-            }
+        std::vector<Pluma::Outline::Heading> headings;
+        if (tree) {
+            headings = Pluma::Outline::CollectHeadings(*tree, kOutlineMaxItems);
+        }
+        for (auto& heading : headings) {
+            if (heading.title.size() > 80) heading.title = heading.title.substr(0, 79) + L"…";
         }
 
         if (headings.empty()) {
@@ -661,12 +719,24 @@ public:
 
         if (cmd >= static_cast<int>(kOutlineFirstCommand) &&
             static_cast<size_t>(cmd - kOutlineFirstCommand) < headings.size()) {
-            int line = headings[cmd - kOutlineFirstCommand].line;
-            m_editor.GotoLine(line);
-            m_editor.Call(SCI_SETFIRSTVISIBLELINE, m_editor.Call(SCI_VISIBLEFROMDOCLINE, line - 1));
-            m_preview.ScrollToLine(line);
+            NavigateToLine(headings[cmd - kOutlineFirstCommand].line, true);
+        }
+    }
+
+    // Moves the caret to `line` with that line at the top of the editor and the preview.
+    void NavigateToLine(int line, bool focusView) {
+        m_editor.GotoLine(line);
+        m_editor.Call(SCI_SETFIRSTVISIBLELINE, m_editor.Call(SCI_VISIBLEFROMDOCLINE, line - 1));
+        m_preview.ScrollToLine(line);
+        if (focusView) FocusMainView();
+        UpdateStatusBar();
+    }
+
+    void FocusMainView() {
+        if (m_viewMode == ViewMode::PreviewOnly) {
+            ::SetFocus(m_preview.GetHwnd()); // Keyboard scrolling in the preview
+        } else {
             m_editor.SetFocus();
-            UpdateStatusBar();
         }
     }
 
@@ -980,16 +1050,25 @@ private:
             int height = (std::max)(100, (int)(rc.bottom - rc.top));
 
             m_hwndStatusBar = CreateStatusWindowW(
-                WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
+                WS_CHILD | (m_settings.showStatusBar ? WS_VISIBLE : 0) | SBARS_SIZEGRIP,
                 nullptr, m_hwnd, kStatusBarControlId);
             SetWindowSubclass(m_hwndStatusBar, StatusBarSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
             UpdateStatusBarParts();
 
             m_editor.Create(m_hwnd, m_hInstance, kEditorControlId, 0, 0, width / 2, height);
+            ApplyEditorSettings();
             m_editor.ApplyTheme(darkMode);
+            m_lineEnding = m_settings.newFileLineEnding;
+            m_editor.SetEolMode(ToScintillaEol(m_lineEnding));
 
             m_preview.Create(m_hwnd, m_hInstance, width / 2, 0, width / 2, height);
             m_preview.SetDarkMode(darkMode);
+            m_preview.SetDpi(PreviewDpi());
+
+            m_outline.Create(m_hwnd, m_hInstance);
+            m_outline.SetDarkMode(darkMode);
+            m_outline.SetOnNavigate([this](int line, bool focusView) { NavigateToLine(line, focusView); });
+            m_outline.SetOnClose([this] { SetOutlineVisible(false); });
             m_preview.SetOnOpenDocumentCallback([this](const std::filesystem::path& path) {
                 // Links to other Markdown files open in Pluma itself.
                 if (PromptSaveChanges()) {
@@ -998,6 +1077,7 @@ private:
             });
 
             m_syncScroll = std::make_unique<Pluma::Sync::SyncScrollController>(&m_editor, &m_preview);
+            UpdateSyncScrollState();
             m_parseWorker = std::make_unique<Pluma::Markdown::ParseWorker>(m_hwnd, Pluma::Markdown::WM_USER_PARSE_COMPLETE);
 
             RelayoutChildren();
@@ -1005,7 +1085,7 @@ private:
             UpdateStatusBar();
             UpdateThemeMenuRadio();
             UpdateWordWrapMenuCheck();
-            m_editor.SetFocus();
+            FocusMainView();
             return 0;
         }
 
@@ -1019,11 +1099,7 @@ private:
             return 1;
 
         case WM_SETFOCUS:
-            if (m_viewMode == ViewMode::PreviewOnly) {
-                ::SetFocus(m_preview.GetHwnd()); // Keyboard scrolling in the preview
-            } else {
-                m_editor.SetFocus();
-            }
+            FocusMainView();
             return 0;
 
         case WM_DROPFILES: {
@@ -1057,6 +1133,9 @@ private:
                     }
                 } else if (scn->nmhdr.code == SCN_UPDATEUI) {
                     UpdateStatusBar();
+                    if (m_settings.showOutline && (scn->updated & (SC_UPDATE_SELECTION | SC_UPDATE_CONTENT))) {
+                        m_outline.HighlightLine(m_editor.GetCursorPosition().line);
+                    }
                     if (scn->updated & SC_UPDATE_V_SCROLL) {
                         if (m_syncScroll && m_viewMode == ViewMode::Split) {
                             m_syncScroll->OnEditorScrolled();
@@ -1078,6 +1157,11 @@ private:
             auto* rawTree = reinterpret_cast<Pluma::Markdown::BlockTree*>(lParam);
             if (version >= m_lastAppliedVersion) {
                 m_lastAppliedVersion = version;
+                m_headings = Pluma::Outline::CollectHeadings(*rawTree);
+                if (m_settings.showOutline) {
+                    m_outline.SetHeadings(m_headings);
+                    m_outline.HighlightLine(m_editor.GetCursorPosition().line);
+                }
                 m_preview.SetBlockTree(std::unique_ptr<Pluma::Markdown::BlockTree>(rawTree));
             } else {
                 delete rawTree;
@@ -1086,110 +1170,85 @@ private:
         }
 
         case WM_LBUTTONDOWN: {
-            if (m_viewMode == ViewMode::Split) {
-                int mouseX = GET_X_LPARAM(lParam);
-                RECT rc{};
-                GetClientRect(m_hwnd, &rc);
-                int clientW = static_cast<int>(rc.right - rc.left);
-                int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
-                int editorW = static_cast<int>((clientW - dividerW) * m_splitRatio);
-                editorW = (std::clamp)(editorW, 50, (std::max)(50, clientW - dividerW - 50));
-
-                if (mouseX >= editorW && mouseX <= editorW + dividerW) {
-                    m_isDraggingSplitter = true;
-                    SetCapture(m_hwnd);
-                    return 0;
-                }
+            const Divider divider = HitTestDivider(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            if (divider != Divider::None) {
+                m_dragDivider = divider;
+                SetCapture(m_hwnd);
+                InvalidateDividers();
+                return 0;
             }
             break;
         }
 
         case WM_MOUSEMOVE: {
-            if (m_isDraggingSplitter) {
-                // Signed coordinate: while captured the mouse may go left of the window.
-                int mouseX = GET_X_LPARAM(lParam);
-                RECT rc{};
-                GetClientRect(m_hwnd, &rc);
-                int w = rc.right - rc.left;
-                if (w > 0) {
-                    m_splitRatio = (std::clamp)(static_cast<float>(mouseX) / static_cast<float>(w), 0.15f, 0.85f);
-                    RelayoutChildren();
-                }
+            // Signed coordinates: while captured the mouse may go left of the window.
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (m_dragDivider != Divider::None) {
+                DragDividerTo(pt.x);
                 return 0;
             }
 
-            if (m_viewMode == ViewMode::Split) {
-                int mouseX = GET_X_LPARAM(lParam);
-                RECT rc{};
-                GetClientRect(m_hwnd, &rc);
-                int clientW = static_cast<int>(rc.right - rc.left);
-                int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
-                int editorW = static_cast<int>((clientW - dividerW) * m_splitRatio);
-                editorW = (std::clamp)(editorW, 50, (std::max)(50, clientW - dividerW - 50));
-
-                bool hovering = (mouseX >= editorW && mouseX <= editorW + dividerW);
-                if (hovering != m_isHoveringSplitter) {
-                    m_isHoveringSplitter = hovering;
-                    RECT divRc{ editorW, 0, editorW + dividerW, static_cast<int>(rc.bottom - rc.top) };
-                    InvalidateRect(m_hwnd, &divRc, FALSE);
-
-                    if (hovering) {
-                        TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, m_hwnd, 0 };
-                        TrackMouseEvent(&tme);
-                    }
+            const Divider hovered = HitTestDivider(pt);
+            if (hovered != m_hoverDivider) {
+                m_hoverDivider = hovered;
+                InvalidateDividers();
+                if (hovered != Divider::None) {
+                    TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, m_hwnd, 0 };
+                    TrackMouseEvent(&tme);
                 }
             }
             break;
         }
 
         case WM_MOUSELEAVE: {
-            if (m_isHoveringSplitter) {
-                m_isHoveringSplitter = false;
-                InvalidateRect(m_hwnd, nullptr, FALSE);
+            if (m_hoverDivider != Divider::None) {
+                m_hoverDivider = Divider::None;
+                InvalidateDividers();
             }
             return 0;
         }
 
         case WM_LBUTTONUP: {
-            if (m_isDraggingSplitter) {
-                m_isDraggingSplitter = false;
+            if (m_dragDivider != Divider::None) {
+                m_dragDivider = Divider::None;
                 ReleaseCapture();
-                InvalidateRect(m_hwnd, nullptr, FALSE);
+                InvalidateDividers();
                 return 0;
             }
             break;
         }
 
         case WM_CAPTURECHANGED:
-            m_isDraggingSplitter = false;
+            m_dragDivider = Divider::None;
             break;
 
         case WM_LBUTTONDBLCLK: {
-            // Double-click on the divider restores a 50/50 split.
-            if (m_viewMode == ViewMode::Split) {
+            // Double-click on a divider restores its default position.
+            switch (HitTestDivider(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)})) {
+            case Divider::Split:
                 m_splitRatio = 0.5f;
                 RelayoutChildren();
                 return 0;
+            case Divider::Outline:
+                m_settings.outlineWidth = Pluma::Config::Settings{}.outlineWidth;
+                RelayoutChildren();
+                return 0;
+            default:
+                break;
             }
             break;
         }
 
         case WM_SETCURSOR: {
-            if (m_isDraggingSplitter) {
+            if (m_dragDivider != Divider::None) {
                 SetCursor(m_hSizeWeCursor);
                 return TRUE;
             }
-            if (m_viewMode == ViewMode::Split && reinterpret_cast<HWND>(wParam) == m_hwnd) {
+            if (reinterpret_cast<HWND>(wParam) == m_hwnd) {
                 POINT pt{};
                 GetCursorPos(&pt);
                 ScreenToClient(m_hwnd, &pt);
-                RECT rc{};
-                GetClientRect(m_hwnd, &rc);
-                int clientW = static_cast<int>(rc.right - rc.left);
-                int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
-                int editorW = static_cast<int>((clientW - dividerW) * m_splitRatio);
-                editorW = (std::clamp)(editorW, 50, (std::max)(50, clientW - dividerW - 50));
-                if (pt.x >= editorW && pt.x <= editorW + dividerW) {
+                if (HitTestDivider(pt) != Divider::None) {
                     SetCursor(m_hSizeWeCursor);
                     return TRUE;
                 }
@@ -1213,7 +1272,8 @@ private:
 
         case WM_DPICHANGED: {
             m_dpi = HIWORD(wParam);
-            m_preview.SetDpi(m_dpi);
+            m_preview.SetDpi(PreviewDpi());
+            m_outline.SetDpi(m_dpi);
             m_statusFont.reset();
             UpdateStatusBarParts();
             auto* const prcNewWindow = reinterpret_cast<RECT*>(lParam);
@@ -1230,31 +1290,9 @@ private:
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(m_hwnd, &ps);
-            if (m_viewMode == ViewMode::Split) {
-                RECT rc;
-                GetClientRect(m_hwnd, &rc);
-                int clientW = static_cast<int>(rc.right - rc.left);
-                int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
-                int editorW = static_cast<int>((clientW - dividerW) * m_splitRatio);
-                editorW = (std::clamp)(editorW, 50, (std::max)(50, clientW - dividerW - 50));
-                RECT divRc{ editorW, 0, editorW + dividerW, static_cast<int>(rc.bottom - rc.top) };
-
-                bool dark = IsDarkMode();
-                COLORREF divBg = dark ? RGB(30, 30, 30) : RGB(243, 243, 243);
-                COLORREF divLine = dark ? RGB(45, 45, 45) : RGB(220, 220, 220);
-                if (m_isDraggingSplitter || m_isHoveringSplitter) {
-                    divLine = dark ? RGB(86, 156, 214) : RGB(0, 120, 215);
-                }
-                HBRUSH hbr = CreateSolidBrush(divBg);
-                FillRect(hdc, &divRc, hbr);
-                DeleteObject(hbr);
-
-                int midX = divRc.left + (divRc.right - divRc.left) / 2;
-                RECT lineRc{ midX, 0, midX + 1, divRc.bottom };
-                HBRUSH hbrLine = CreateSolidBrush(divLine);
-                FillRect(hdc, &lineRc, hbrLine);
-                DeleteObject(hbrLine);
-            }
+            const Layout layout = ComputeLayout();
+            PaintDivider(hdc, layout.outlineDivider, Divider::Outline);
+            PaintDivider(hdc, layout.splitDivider, Divider::Split);
             EndPaint(m_hwnd, &ps);
             SignalStartupEvent();
             return 0;
@@ -1302,6 +1340,7 @@ private:
                 return 0;
             case IDM_EDIT_WRAP:
                 m_editor.ToggleWordWrap();
+                m_settings.wordWrap = m_editor.GetWordWrap();
                 UpdateWordWrapMenuCheck();
                 return 0;
             case IDM_EDIT_SELECTALL:
@@ -1334,25 +1373,30 @@ private:
                 return 0;
 
             case IDM_VIEW_EDITOR_ONLY:
-                m_viewMode = ViewMode::EditorOnly;
-                if (m_syncScroll) m_syncScroll->SetEnabled(false);
-                RelayoutChildren();
-                UpdateStatusBar();
+                SetViewMode(ViewMode::EditorOnly);
                 return 0;
             case IDM_VIEW_SPLIT:
-                m_viewMode = ViewMode::Split;
-                if (m_syncScroll) m_syncScroll->SetEnabled(true);
-                RelayoutChildren();
-                UpdateStatusBar();
+                SetViewMode(ViewMode::Split);
                 return 0;
             case IDM_VIEW_PREVIEW_ONLY:
-                m_viewMode = ViewMode::PreviewOnly;
-                if (m_syncScroll) m_syncScroll->SetEnabled(false);
-                RelayoutChildren();
-                UpdateStatusBar();
+                SetViewMode(ViewMode::PreviewOnly);
                 return 0;
             case IDM_VIEW_OUTLINE:
                 ShowOutlinePopup();
+                return 0;
+            case IDM_VIEW_OUTLINE_PANEL:
+                SetOutlineVisible(!m_settings.showOutline);
+                if (m_settings.showOutline) m_outline.Focus();
+                return 0;
+            case IDM_VIEW_STATUSBAR:
+                SetStatusBarVisible(!m_settings.showStatusBar);
+                return 0;
+
+            case IDM_SETTINGS_PREFERENCES:
+                ShowPreferences();
+                return 0;
+            case IDM_SETTINGS_DEFAULT_EDITOR:
+                MakeDefaultEditor(m_hwnd);
                 return 0;
 
             case IDM_VIEW_THEME_SYSTEM:
@@ -1379,6 +1423,7 @@ private:
 
         case WM_CLOSE:
             if (PromptSaveChanges()) {
+                SaveSettingsNow();
                 DestroyWindow(m_hwnd);
             }
             return 0;
@@ -1404,7 +1449,6 @@ private:
     }
 
     Pluma::Platform::AppTheme m_appTheme = Pluma::Platform::AppTheme::System;
-    bool m_isHoveringSplitter = false;
 
     bool IsDarkMode() const {
         return Pluma::Platform::IsDarkModeActive(m_appTheme);
@@ -1430,6 +1474,7 @@ private:
         Pluma::Platform::ApplyThemeToWindow(m_hwnd, darkMode);
         m_editor.ApplyTheme(darkMode);
         m_preview.SetDarkMode(darkMode);
+        m_outline.SetDarkMode(darkMode);
 
         UpdateThemeMenuRadio();
         Pluma::Platform::RefreshWindowFrame(m_hwnd);
@@ -1439,6 +1484,194 @@ private:
         }
         InvalidateRect(m_hwnd, nullptr, TRUE);
         UpdateStatusBar();
+    }
+
+    // Preview zoom is applied as a DPI scale: layout and text grow uniformly.
+    UINT PreviewDpi() const {
+        return static_cast<UINT>(MulDiv(static_cast<int>(m_dpi), m_settings.previewZoom, 100));
+    }
+
+    void ApplyEditorSettings() {
+        m_editor.SetFont(m_settings.editorFont, m_settings.editorFontSize);
+        m_editor.SetWordWrap(m_settings.wordWrap);
+        m_editor.SetShowLineNumbers(m_settings.showLineNumbers);
+        m_editor.SetHighlightCurrentLine(m_settings.highlightCurrentLine);
+        m_editor.SetTabSettings(m_settings.tabWidth, m_settings.useTabs);
+    }
+
+    void UpdateSyncScrollState() {
+        if (m_syncScroll) {
+            m_syncScroll->SetEnabled(m_viewMode == ViewMode::Split && m_settings.syncScroll);
+        }
+    }
+
+    void SetViewMode(ViewMode mode) {
+        m_viewMode = mode;
+        UpdateSyncScrollState();
+        RelayoutChildren();
+        UpdateStatusBar();
+        // Keep the keyboard in a visible view.
+        const HWND focus = GetFocus();
+        if (focus == m_editor.GetHwnd() || focus == m_preview.GetHwnd()) FocusMainView();
+    }
+
+    void SetOutlineVisible(bool visible) {
+        const bool hadFocus = !visible && m_outline.GetHwnd() && IsChild(m_outline.GetHwnd(), GetFocus());
+        m_settings.showOutline = visible;
+        if (visible) {
+            m_outline.SetHeadings(m_headings);
+            m_outline.HighlightLine(m_editor.GetCursorPosition().line);
+        }
+        RelayoutChildren();
+        if (hadFocus) FocusMainView();
+    }
+
+    void SetStatusBarVisible(bool visible) {
+        m_settings.showStatusBar = visible;
+        if (m_hwndStatusBar) ShowWindow(m_hwndStatusBar, visible ? SW_SHOW : SW_HIDE);
+        RelayoutChildren();
+    }
+
+    // Applies preferences edited in the Preferences dialog.
+    void ApplySettings(const Pluma::Config::Settings& settings) {
+        const bool zoomChanged = settings.previewZoom != m_settings.previewZoom;
+        m_settings = settings;
+        ApplyEditorSettings();
+        UpdateWordWrapMenuCheck();
+        if (zoomChanged) m_preview.SetDpi(PreviewDpi());
+        if (m_hwndStatusBar) ShowWindow(m_hwndStatusBar, m_settings.showStatusBar ? SW_SHOW : SW_HIDE);
+        SetOutlineVisible(m_settings.showOutline);
+        UpdateSyncScrollState();
+        if (settings.theme != m_appTheme) {
+            SetThemeMode(settings.theme);
+        }
+        UpdateStatusBar();
+    }
+
+    // Copies the state changed outside the Preferences dialog (menus, dividers, window) into m_settings.
+    void CaptureRuntimeState() {
+        m_settings.theme = m_appTheme;
+        m_settings.lastView = m_viewMode;
+        m_settings.splitRatio = m_splitRatio;
+        m_settings.wordWrap = m_editor.GetWordWrap();
+        m_settings.lastFile = m_currentPath.wstring();
+
+        WINDOWPLACEMENT wp{sizeof(wp)};
+        if (m_hwnd && GetWindowPlacement(m_hwnd, &wp)) {
+            const RECT& r = wp.rcNormalPosition;
+            m_settings.hasWindowRect = r.right > r.left && r.bottom > r.top;
+            m_settings.windowX = r.left;
+            m_settings.windowY = r.top;
+            m_settings.windowWidth = r.right - r.left;
+            m_settings.windowHeight = r.bottom - r.top;
+            m_settings.windowMaximized =
+                IsZoomed(m_hwnd) || (IsIconic(m_hwnd) && (wp.flags & WPF_RESTORETOMAXIMIZED));
+        }
+        m_settings.Sanitize();
+    }
+
+    void SaveSettingsNow() {
+        CaptureRuntimeState();
+        Pluma::Config::SaveSettings(m_settingsPath, m_settings);
+    }
+
+    void ShowPreferences() {
+        CaptureRuntimeState();
+        Pluma::App::SettingsDialogCallbacks callbacks;
+        callbacks.apply = [this](const Pluma::Config::Settings& settings) {
+            ApplySettings(settings);
+            SaveSettingsNow();
+        };
+        callbacks.makeDefaultEditor = [this] { MakeDefaultEditor(GetActiveWindow()); };
+        callbacks.isDefaultEditor = [] {
+            return Pluma::Platform::IsDefaultMarkdownHandler(Pluma::Platform::GetExecutablePath());
+        };
+        Pluma::App::ShowSettingsDialog(m_hwnd, m_hInstance, m_settings, callbacks);
+        FocusMainView();
+    }
+
+    // Registers Pluma for .md files and asks Windows to make it the default editor.
+    void MakeDefaultEditor(HWND owner) {
+        const std::wstring exePath = Pluma::Platform::GetExecutablePath();
+        const bool wasDefault = Pluma::Platform::IsDefaultMarkdownHandler(exePath);
+        if (!Pluma::Platform::RegisterMarkdownHandler(exePath)) {
+            MessageBoxW(owner, L"No se pudo registrar Pluma como aplicación para archivos Markdown.",
+                        L"Editor predeterminado", MB_OK | MB_ICONERROR);
+            return;
+        }
+        if (Pluma::Platform::IsDefaultMarkdownHandler(exePath)) {
+            MessageBoxW(owner,
+                        wasDefault ? L"Pluma ya es el editor predeterminado de los archivos Markdown "
+                                     L"(.md, .markdown, .mdown)."
+                                   : L"Listo: los archivos Markdown (.md, .markdown, .mdown) se abrirán con Pluma.",
+                        L"Editor predeterminado", MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+
+        const int answer = MessageBoxW(owner,
+            L"Pluma se ha registrado como aplicación para archivos Markdown.\n\n"
+            L"Windows solo permite cambiar el editor predeterminado con su propia confirmación. "
+            L"A continuación se abrirá el selector de Windows: elija \u00abPluma\u00bb y confirme con "
+            L"\u00abAceptar\u00bb (o \u00abSiempre\u00bb).",
+            L"Editor predeterminado", MB_OKCANCEL | MB_ICONINFORMATION);
+        if (answer != IDOK) return;
+
+        if (!Pluma::Platform::ShowDefaultAppPicker(owner)) {
+            MessageBoxW(owner,
+                        L"No se pudo abrir el selector de aplicaciones de Windows.\n\n"
+                        L"Puede elegir Pluma en Configuración > Aplicaciones > Aplicaciones predeterminadas.",
+                        L"Editor predeterminado", MB_OK | MB_ICONWARNING);
+            return;
+        }
+        if (Pluma::Platform::IsDefaultMarkdownHandler(exePath)) {
+            MessageBoxW(owner, L"Listo: los archivos Markdown (.md, .markdown, .mdown) se abrirán con Pluma.",
+                        L"Editor predeterminado", MB_OK | MB_ICONINFORMATION);
+        }
+    }
+
+    void InvalidateDividers() {
+        const Layout layout = ComputeLayout();
+        InvalidateRect(m_hwnd, &layout.outlineDivider, FALSE);
+        InvalidateRect(m_hwnd, &layout.splitDivider, FALSE);
+    }
+
+    void DragDividerTo(int mouseX) {
+        const Layout layout = ComputeLayout();
+        const int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
+        if (m_dragDivider == Divider::Split) {
+            const int contentX = layout.editor.left;
+            const int contentW = layout.preview.right - contentX;
+            if (contentW > dividerW) {
+                const float ratio = static_cast<float>(mouseX - contentX - dividerW / 2) /
+                                    static_cast<float>(contentW - dividerW);
+                m_splitRatio = (std::clamp)(ratio, Pluma::Config::kMinSplitRatio, Pluma::Config::kMaxSplitRatio);
+            }
+        } else if (m_dragDivider == Divider::Outline) {
+            const int logical = MulDiv(mouseX - dividerW / 2, 96, static_cast<int>(m_dpi));
+            m_settings.outlineWidth =
+                (std::clamp)(logical, Pluma::Config::kMinOutlineWidth, Pluma::Config::kMaxOutlineWidth);
+        }
+        RelayoutChildren();
+        UpdateWindow(m_hwnd);
+    }
+
+    void PaintDivider(HDC hdc, const RECT& rc, Divider divider) const {
+        if (IsRectEmpty(&rc)) return;
+        const bool dark = IsDarkMode();
+        COLORREF divBg = dark ? RGB(30, 30, 30) : RGB(243, 243, 243);
+        COLORREF divLine = dark ? RGB(45, 45, 45) : RGB(220, 220, 220);
+        if (m_dragDivider == divider || m_hoverDivider == divider) {
+            divLine = dark ? RGB(86, 156, 214) : RGB(0, 120, 215);
+        }
+        HBRUSH hbr = CreateSolidBrush(divBg);
+        FillRect(hdc, &rc, hbr);
+        DeleteObject(hbr);
+
+        const int midX = rc.left + (rc.right - rc.left) / 2;
+        RECT lineRc{ midX, rc.top, midX + 1, rc.bottom };
+        HBRUSH hbrLine = CreateSolidBrush(divLine);
+        FillRect(hdc, &lineRc, hbrLine);
+        DeleteObject(hbrLine);
     }
 
     void UpdateWordWrapMenuCheck() {
@@ -1586,8 +1819,14 @@ private:
 
     ViewMode m_viewMode = ViewMode::Split;
     float m_splitRatio = 0.5f;
-    bool m_isDraggingSplitter = false;
+    Divider m_dragDivider = Divider::None;
+    Divider m_hoverDivider = Divider::None;
     int m_splitterWidth = 6;
+
+    Pluma::Config::Settings m_settings;
+    std::filesystem::path m_settingsPath;
+    Pluma::Outline::OutlinePanel m_outline;
+    std::vector<Pluma::Outline::Heading> m_headings; // From the last applied parse
     UINT m_dpi = 96;
     HCURSOR m_hSizeWeCursor = nullptr;
 
