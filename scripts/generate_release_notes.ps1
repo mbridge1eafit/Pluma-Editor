@@ -22,6 +22,7 @@ Set-Location $rootDir
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $rootDir "dist\RELEASE_NOTES.md"
 }
+$OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 
 # Detectar version si no se especifico
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -39,11 +40,20 @@ if (-not $Version.StartsWith("v")) {
     $Version = "v$Version"
 }
 
-# Determinar el rango de commits
+# Determinar el rango de commits: desde el tag anterior a esta version.
+# En CI el tag de la version ya existe y apunta a HEAD, asi que se excluye (si no, el rango quedaria vacio).
 if ([string]::IsNullOrWhiteSpace($FromTag)) {
-    $tags = @(git tag -l --sort=-v:refname)
-    if ($tags.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($tags[0]))) {
-        $FromTag = $tags[0].Trim()
+    $toSha = (git rev-parse "$ToCommit^{commit}").Trim()
+    foreach ($tag in @(git tag -l "v*" --sort=-v:refname)) {
+        $tag = $tag.Trim()
+        if ([string]::IsNullOrWhiteSpace($tag) -or $tag -eq $Version) { continue }
+        $tagSha = (git rev-parse "$tag^{commit}").Trim()
+        if ($tagSha -eq $toSha) { continue }
+        git merge-base --is-ancestor $tagSha $toSha 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $FromTag = $tag
+            break
+        }
     }
 }
 
@@ -163,7 +173,8 @@ if (-not (Test-Path $outDir)) {
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 }
 $content = $lines -join "`r`n"
-$content | Out-File -FilePath $OutputPath -Encoding utf8
+# UTF-8 sin BOM: el archivo se publica tal cual como cuerpo del Release en GitHub.
+[System.IO.File]::WriteAllText($OutputPath, $content, [System.Text.UTF8Encoding]::new($false))
 
 Write-Host "[OK] Release notes generadas en: $OutputPath" -ForegroundColor Green
 Write-Host ""

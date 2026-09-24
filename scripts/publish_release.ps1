@@ -39,6 +39,16 @@ if (-not $Version.StartsWith("v")) {
     $Version = "v$Version"
 }
 
+# El cuerpo del Release en GitHub debe ser siempre dist/RELEASE_NOTES.md (nunca las notas automaticas de GitHub).
+function Test-ReleaseNotesPublished([string]$Tag) {
+    $body = (gh release view $Tag --json body --jq .body) | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $body.Contains("# Pluma $Tag")) {
+        Write-Error "El Release $Tag no tiene publicadas las notas generadas. Corrigelo con: gh release edit $Tag --notes-file dist/RELEASE_NOTES.md"
+        exit 1
+    }
+    Write-Host "[OK] Las notas de version estan publicadas en el Release $Tag." -ForegroundColor Green
+}
+
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "         Lanzamiento de Pluma $Version ($Mode)" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
@@ -123,6 +133,28 @@ if ($Mode -eq "github-actions") {
 
     Write-Host "`n[EXITO] Tag $Version enviado. El workflow de GitHub Actions se ha iniciado para publicar el Release." -ForegroundColor Green
     Write-Host "Puedes seguir el progreso en: https://github.com/mbridge1eafit/Pluma-Editor/actions" -ForegroundColor Cyan
+
+    # El workflow genera y publica las notas con los checksums de sus propios artefactos; se verifica al terminar.
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+        Write-Host "`nEsperando al workflow de Release para verificar las notas publicadas..." -ForegroundColor Gray
+        $runId = $null
+        for ($i = 0; $i -lt 12 -and -not $runId; $i++) {
+            Start-Sleep -Seconds 5
+            $runId = gh run list --workflow release.yml --branch $Version --limit 1 --json databaseId --jq '.[0].databaseId'
+        }
+        if (-not $runId) {
+            Write-Error "No se encontro la ejecucion del workflow de Release para $Version."
+            exit 1
+        }
+        gh run watch $runId --exit-status
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "El workflow de Release fallo. Revisa: https://github.com/mbridge1eafit/Pluma-Editor/actions/runs/$runId"
+            exit 1
+        }
+        Test-ReleaseNotesPublished $Version
+    } else {
+        Write-Warning "GitHub CLI (gh) no esta disponible: verifica manualmente que el Release $Version muestra las notas generadas."
+    }
     return
 }
 
@@ -135,6 +167,7 @@ if ($Mode -eq "gh-cli") {
     & gh release create $Version "$zipPath" "$checksumPath" --title "Pluma $Version" --notes-file "$notesPath"
     if ($LASTEXITCODE -eq 0) {
         Write-Host "`n[EXITO] Release $Version publicado exitosamente en GitHub!" -ForegroundColor Green
+        Test-ReleaseNotesPublished $Version
     } else {
         Write-Error "Fallo la publicacion con gh release create."
     }

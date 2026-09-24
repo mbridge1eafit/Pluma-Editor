@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0 # Full history and tags: the release notes list the commits since the previous tag
 
       - name: Setup MSVC developer prompt
         uses: ilammy/msvc-dev-cmd@v1
@@ -57,14 +58,38 @@ jobs:
         run: |
           .\scripts\package_release.ps1 -Version "${{ steps.version.outputs.tag }}"
 
+      # After packaging, so the notes embed the checksums of the published artifacts.
+      - name: Generate Release Notes
+        shell: pwsh
+        run: |
+          .\scripts\generate_release_notes.ps1 -Version "${{ steps.version.outputs.tag }}"
+          if (-not (Select-String -Path dist/RELEASE_NOTES.md -SimpleMatch "# Pluma ${{ steps.version.outputs.tag }}" -Quiet)) {
+            throw "dist/RELEASE_NOTES.md was not generated for ${{ steps.version.outputs.tag }}"
+          }
+
+      # The release body is always dist/RELEASE_NOTES.md, never GitHub's auto-generated notes.
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Pluma ${{ steps.version.outputs.tag }}
+          body_path: dist/RELEASE_NOTES.md
           files: |
             dist/*.zip
             dist/SHA256SUMS.txt
-          generate_release_notes: true
+          generate_release_notes: false
           draft: false
           prerelease: false
+
+      - name: Verify Published Release Notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $body = gh release view $tag --repo "${{ github.repository }}" --json body --jq .body | Out-String
+          $zipHash = ((Get-Content dist/SHA256SUMS.txt | Where-Object { $_ -match '\.zip$' }) -split '\s+')[0]
+          if (-not $body.Contains("# Pluma $tag") -or -not $body.Contains($zipHash)) {
+            throw "The published body of release $tag does not match dist/RELEASE_NOTES.md"
+          }
+          Write-Host "Release notes of $tag are published."
