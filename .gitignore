@@ -1,0 +1,23 @@
+# Build output
+build/
+out/
+bin/
+*.exe
+*.obj
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.res
+
+# Visual Studio & IDEs
+.vs/
+.vscode/
+CMakeUserPresets.json
+*.user
+
+# Temporary and test artifacts
+*.log
+tests/golden_actual/
+tests/corpus/large.md
+tests/corpus/huge.md

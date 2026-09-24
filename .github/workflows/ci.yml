@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSVC developer prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure Release Preset
+        run: cmake --preset release
+
+      - name: Build Release Preset
+        run: cmake --build --preset release
+
+      - name: Run Tests (Release)
+        run: ctest --preset release --output-on-failure
+
+      - name: Verify Executable Size
+        shell: pwsh
+        run: |
+          $exe = Get-Item "build/release/bin/pluma.exe"
+          $sizeMb = $exe.Length / 1MB
+          Write-Host "Binary size: $([math]::Round($sizeMb, 2)) MB ($($exe.Length) bytes)"
+          if ($sizeMb -gt 4.0) {
+              Write-Error "Binary size exceeds hard limit of 4.0 MB!"
+              exit 1
+          }
+          if ($sizeMb -le 2.0) {
+              Write-Host "Binary size within target (<= 2.0 MB)" -ForegroundColor Green
+          } else {
+              Write-Host "Binary size between target and hard limit" -ForegroundColor Yellow
+          }
+
+      - name: Run Startup Benchmark
+        shell: pwsh
+        run: |
+          .\bench\startup.ps1 -ExePath "build/release/bin/pluma.exe" -FailOnHardLimit
+
+      - name: Configure ASan Preset
+        run: cmake --preset asan
+
+      - name: Build ASan Preset
+        run: cmake --build --preset asan
+
+      - name: Run Tests (ASan)
+        run: ctest --preset asan --output-on-failure
