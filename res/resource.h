@@ -1,6 +1,7 @@
 #pragma once
 
 #define IDI_APP_ICON                    101
+#define IDI_DOC_MD                      105
 #define IDC_PLUMA                       102
 #define IDR_MAIN_MENU                   103
 #define IDR_ACCELERATOR                 104

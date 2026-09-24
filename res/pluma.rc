@@ -1,7 +1,12 @@
+#pragma code_page(65001)
 #include <windows.h>
 #include "resource.h"
 
 // Application Manifest is handled by CMake target_sources
+ 
+// Icons
+IDI_APP_ICON    ICON    "icons/app.ico"
+IDI_DOC_MD      ICON    "icons/doc_md.ico"
 
 // Version Information
 VS_VERSION_INFO VERSIONINFO
