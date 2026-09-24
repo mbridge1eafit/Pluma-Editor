@@ -1,5 +1,6 @@
 #include "preview_view.h"
 #include <shellapi.h>
+#include <uxtheme.h>
 #include <algorithm>
 
 namespace Pluma::Preview {
@@ -41,6 +42,8 @@ bool PreviewView::Create(HWND hParent, HINSTANCE hInstance, int x, int y, int wi
     if (!m_hwnd) {
         return false;
     }
+
+    SetWindowTheme(m_hwnd, m_isDarkMode ? L"DarkMode_Explorer" : L"", nullptr);
 
     HRESULT hr = D2D1CreateFactory(
         D2D1_FACTORY_TYPE_SINGLE_THREADED,
@@ -429,6 +432,10 @@ void PreviewView::SetDarkMode(bool isDark) {
     m_isDarkMode = isDark;
     m_colors = isDark ? PreviewThemeColors::Dark() : PreviewThemeColors::Light();
     DiscardDirect2DResources();
+
+    if (m_hwnd) {
+        SetWindowTheme(m_hwnd, isDark ? L"DarkMode_Explorer" : L"", nullptr);
+    }
 
     if (m_tree) {
         RECT rc{};

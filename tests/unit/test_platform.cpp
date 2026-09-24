@@ -27,3 +27,11 @@ TEST(PlatformThemeTest, SystemThemeQueryDoesNotCrash) {
     // Valid result is either true or false
     EXPECT_TRUE(isDark == true || isDark == false);
 }
+
+TEST(PlatformThemeTest, ThemeModeResolution) {
+    EXPECT_TRUE(Pluma::Platform::IsDarkModeActive(Pluma::Platform::AppTheme::Dark));
+    EXPECT_FALSE(Pluma::Platform::IsDarkModeActive(Pluma::Platform::AppTheme::Light));
+    EXPECT_EQ(Pluma::Platform::IsDarkModeActive(Pluma::Platform::AppTheme::System),
+              Pluma::Platform::IsSystemDarkMode());
+}
+

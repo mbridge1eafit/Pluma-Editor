@@ -114,6 +114,13 @@ BEGIN
         MENUITEM "Vista &dividida\tCtrl+2",      IDM_VIEW_SPLIT
         MENUITEM "Solo vista &previa\tCtrl+3",   IDM_VIEW_PREVIEW_ONLY
         MENUITEM SEPARATOR
+        POPUP "&Tema"
+        BEGIN
+            MENUITEM "&Automático (Sistema)",   IDM_VIEW_THEME_SYSTEM
+            MENUITEM "Modo &oscuro",            IDM_VIEW_THEME_DARK
+            MENUITEM "Modo &claro",             IDM_VIEW_THEME_LIGHT
+        END
+        MENUITEM SEPARATOR
         MENUITEM "&Esquema de encabezados...\tCtrl+Shift+O", IDM_VIEW_OUTLINE
     END
     POPUP "A&yuda"

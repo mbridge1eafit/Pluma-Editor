@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <uxtheme.h>
 
 #include "ILexer.h"
 #include "LexerModule.h"
@@ -314,6 +315,9 @@ int EditorView::ReplaceAll(std::string_view findText, std::string_view replaceTe
 
 void EditorView::ApplyTheme(bool darkMode) {
     m_isDarkMode = darkMode;
+    if (m_hwndScintilla) {
+        SetWindowTheme(m_hwndScintilla, darkMode ? L"DarkMode_Explorer" : L"", nullptr);
+    }
     SetupStyles(darkMode);
 }
 
@@ -368,7 +372,13 @@ void EditorView::SetupStyles(bool darkMode) {
 
     // Caret and selection
     Call(SCI_SETCARETFORE, caretColor);
+    Call(SCI_SETCARETWIDTH, 2);
     Call(SCI_SETSELBACK, true, selBgColor);
+
+    // Active line background highlight
+    Call(SCI_SETCARETLINEVISIBLE, true);
+    Call(SCI_SETCARETLINEVISIBLEALWAYS, true);
+    Call(SCI_SETCARETLINEBACK, darkMode ? MakeSciColor(38, 38, 38) : MakeSciColor(245, 245, 245));
 
     // Line number margin styling
     Call(SCI_STYLESETFORE, STYLE_LINENUMBER, marginFgColor);
