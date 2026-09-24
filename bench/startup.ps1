@@ -53,7 +53,7 @@ function Measure-SingleStartup {
     # Cleanup
     if (-not $proc.HasExited) {
         $proc.Kill()
-        $proc.WaitForExit(1000)
+        $null = $proc.WaitForExit(1000)
     }
     $eventHandle.Close()
 
@@ -76,7 +76,7 @@ for ($i = 1; $i -le $Iterations; $i++) {
     $t = Measure-SingleStartup -path $resolvedExe
     if ($null -ne $t) {
         $timings += $t
-        Write-Host "  Run $i/$Iterations: $([math]::Round($t, 2)) ms"
+        Write-Host ("  Run {0}/${Iterations}: {1:N2} ms" -f $i, [double]$t)
     }
     Start-Sleep -Milliseconds 100
 }
@@ -88,29 +88,29 @@ if ($timings.Count -eq 0) {
 
 $sorted = $timings | Sort-Object
 $count = $sorted.Count
-$min = $sorted[0]
-$max = $sorted[-1]
-$avg = ($sorted | Measure-Object -Average).Average
+$min = [double]$sorted[0]
+$max = [double]$sorted[-1]
+$avg = [double](($sorted | Measure-Object -Average).Average)
 
 # Median
 if ($count % 2 -eq 1) {
-    $median = $sorted[[math]::Floor($count / 2)]
+    $median = [double]$sorted[[math]::Floor($count / 2)]
 } else {
-    $median = ($sorted[$count / 2 - 1] + $sorted[$count / 2]) / 2.0
+    $median = [double](($sorted[$count / 2 - 1] + $sorted[$count / 2]) / 2.0)
 }
 
 # P95 (95th percentile)
 $p95Index = [math]::Ceiling($count * 0.95) - 1
 if ($p95Index -ge $count) { $p95Index = $count - 1 }
-$p95 = $sorted[$p95Index]
+$p95 = [double]$sorted[$p95Index]
 
 Write-Host "----------------------------------------------------------"
 Write-Host "Results ($count valid runs):" -ForegroundColor Green
-Write-Host "  Min:    $([math]::Round($min, 2)) ms"
-Write-Host "  Avg:    $([math]::Round($avg, 2)) ms"
-Write-Host "  Median: $([math]::Round($median, 2)) ms" -ForegroundColor $(if ($median -le $TargetLimitMs) { "Green" } else { "Yellow" })
-Write-Host "  P95:    $([math]::Round($p95, 2)) ms" -ForegroundColor $(if ($p95 -le $HardLimitMs) { "Green" } else { "Red" })
-Write-Host "  Max:    $([math]::Round($max, 2)) ms"
+Write-Host ("  Min:    {0:N2} ms" -f $min)
+Write-Host ("  Avg:    {0:N2} ms" -f $avg)
+Write-Host ("  Median: {0:N2} ms" -f $median) -ForegroundColor $(if ($median -le $TargetLimitMs) { "Green" } else { "Yellow" })
+Write-Host ("  P95:    {0:N2} ms" -f $p95) -ForegroundColor $(if ($p95 -le $HardLimitMs) { "Green" } else { "Red" })
+Write-Host ("  Max:    {0:N2} ms" -f $max)
 Write-Host "=========================================================="
 
 if ($p95 -gt $HardLimitMs) {
