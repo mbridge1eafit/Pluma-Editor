@@ -1610,22 +1610,20 @@ private:
 
         const int answer = MessageBoxW(owner,
             L"Pluma se ha registrado como aplicación para archivos Markdown.\n\n"
-            L"Windows solo permite cambiar el editor predeterminado con su propia confirmación. "
-            L"A continuación se abrirá el selector de Windows: elija \u00abPluma\u00bb y confirme con "
-            L"\u00abAceptar\u00bb (o \u00abSiempre\u00bb).",
+            L"Windows solo permite cambiar el editor predeterminado desde Configuración. "
+            L"A continuación se abrirá Configuración > Aplicaciones > Aplicaciones predeterminadas:\n\n"
+            L"\u2022 Windows 11: asigne Pluma a .md, .markdown y .mdown.\n"
+            L"\u2022 Windows 10: pulse \u00abEstablecer valores predeterminados por aplicación\u00bb, "
+            L"elija Pluma, pulse \u00abAdministrar\u00bb y asigne Pluma a cada extensión.",
             L"Editor predeterminado", MB_OKCANCEL | MB_ICONINFORMATION);
         if (answer != IDOK) return;
 
-        if (!Pluma::Platform::ShowDefaultAppPicker(owner)) {
+        // Settings is non-blocking: the result shows up the next time the preferences are opened.
+        if (!Pluma::Platform::OpenDefaultAppsSettings(owner)) {
             MessageBoxW(owner,
-                        L"No se pudo abrir el selector de aplicaciones de Windows.\n\n"
+                        L"No se pudo abrir Configuración.\n\n"
                         L"Puede elegir Pluma en Configuración > Aplicaciones > Aplicaciones predeterminadas.",
                         L"Editor predeterminado", MB_OK | MB_ICONWARNING);
-            return;
-        }
-        if (Pluma::Platform::IsDefaultMarkdownHandler(exePath)) {
-            MessageBoxW(owner, L"Listo: los archivos Markdown (.md, .markdown, .mdown) se abrirán con Pluma.",
-                        L"Editor predeterminado", MB_OK | MB_ICONINFORMATION);
         }
     }
 
