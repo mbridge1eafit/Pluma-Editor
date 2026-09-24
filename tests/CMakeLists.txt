@@ -15,10 +15,13 @@ FetchContent_MakeAvailable(googletest)
 # Unit test executable
 set(UNIT_TEST_SOURCES
     unit/test_platform.cpp
+    unit/test_document_io.cpp
     ../src/platform/dpi.cpp
     ../src/platform/dpi.h
     ../src/platform/theme.cpp
     ../src/platform/theme.h
+    ../src/io/document_io.cpp
+    ../src/io/document_io.h
 )
 
 add_executable(unit_tests ${UNIT_TEST_SOURCES})

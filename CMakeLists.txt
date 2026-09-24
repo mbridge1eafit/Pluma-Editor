@@ -61,6 +61,8 @@ set(PLUMA_SOURCES
     src/platform/dpi.cpp
     src/platform/theme.h
     src/platform/theme.cpp
+    src/io/document_io.h
+    src/io/document_io.cpp
     res/pluma.rc
     res/resource.h
     res/pluma.manifest
