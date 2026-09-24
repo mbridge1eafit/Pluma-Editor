@@ -61,6 +61,10 @@ set(PLUMA_SOURCES
     src/markdown/md4c_adapter.cpp
     src/markdown/parse_worker.h
     src/markdown/parse_worker.cpp
+    src/preview/preview_layout.h
+    src/preview/preview_layout.cpp
+    src/preview/preview_view.h
+    src/preview/preview_view.cpp
     res/pluma.rc
     res/resource.h
     res/pluma.manifest

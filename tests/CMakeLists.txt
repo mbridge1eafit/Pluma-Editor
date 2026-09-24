@@ -18,6 +18,7 @@ set(UNIT_TEST_SOURCES
     unit/test_document_io.cpp
     unit/test_editor_view.cpp
     unit/test_markdown_parser.cpp
+    unit/test_preview_layout.cpp
     ../src/platform/dpi.cpp
     ../src/platform/dpi.h
     ../src/platform/theme.cpp
@@ -32,6 +33,8 @@ set(UNIT_TEST_SOURCES
     ../src/markdown/md4c_adapter.h
     ../src/markdown/parse_worker.cpp
     ../src/markdown/parse_worker.h
+    ../src/preview/preview_layout.cpp
+    ../src/preview/preview_layout.h
 )
 
 add_executable(unit_tests ${UNIT_TEST_SOURCES})
@@ -50,6 +53,8 @@ target_link_libraries(unit_tests PRIVATE
     scintilla
     lexilla
     dwmapi
+    d2d1
+    dwrite
     user32
     gdi32
     imm32

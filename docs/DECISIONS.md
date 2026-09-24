@@ -59,3 +59,18 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
 - **Alternativas descartadas:**
   - *Parseo síncrono en el hilo de UI:* Descartado porque bloquearía la interfaz y aumentaría la latencia de tecleo a pixel en documentos medianos y grandes (> 100 KB), violando NF-05 y F-08.
   - *Generación de HTML intermedio o DOM web:* Descartado conforme al PRD; el AST en C++ alimenta directamente el motor de layout DirectWrite en M3 sin intermediarios web.
+
+---
+
+## [2026-09-24] Decisión 007: Motor de vista previa Direct2D/DirectWrite y Split View (M3, F-06, F-07, F-10)
+
+- **Contexto:** Los requerimientos F-06 y F-07 exigen renderizado de vista previa enriquecida (encabezados con escala tipográfica proporcional, texto enriquecido, bloques de código, citas, listas, tablas y enlaces) en un componente nativo sin motor de navegador embebido. El requerimiento F-10 exige soporte de enlaces internos (`#ancla`) y externos con cursor interactivo y navegación fluida. Además, se requiere un modo split view con divisor arrastrable y atajos de vista (`Ctrl+1`, `Ctrl+2`, `Ctrl+3`).
+- **Decisión:**
+  - `PreviewLayout` utiliza la API nativa DirectWrite (`IDWriteFactory`, `IDWriteTextFormat`, `IDWriteTextLayout`) para medir y diagramar bloques tipográficos en coordenadas lógicas y de píxel con escalado Per-Monitor DPI v2. Soporta encabezados H1-H6 con tamaños y márgenes específicos, bloques de código en `Consolas` con fondo diferenciado, citas con sangría y barra vertical, listas ordenadas y de tareas con checkboxes interactivos, tablas formateadas con bordes y anchos proporcionales, y slugs canónicos para anclas internas.
+  - Los rangos de enlaces (`LinkTarget`) se almacenan con sus rectángulos delimitadores (`D2D1_RECT_F`) durante el paso de layout. `HitTestLink(x, y)` permite hit-testing inmediato en coordenadas de cliente con viewport offset.
+  - `PreviewView` encapsula una ventana hija Win32 (`PlumaPreviewViewClass`) con render target Direct2D (`ID2D1HwndRenderTarget`) y doble búfer de presentación sin parpadeo. Implementa scroll vertical nativo (`SetScrollInfo`, `WM_VSCROLL`, `WM_MOUSEWHEEL`), culling de visualización (solo dibuja bloques dentro del viewport actual), cursor de mano interactivo (`IDC_HAND`), navegación de anclas internas mediante desplazamiento del scroll y apertura de URLs externas con `ShellExecuteW`.
+  - `MainWindow` gestiona el divisor vertical arrastrable entre el editor y la vista previa con cursor `IDC_SIZEWE`, soporte de DPI dinámico (`WM_DPICHANGED`), y conmutación de vistas (`ViewMode::EditorOnly`, `ViewMode::Split`, `ViewMode::PreviewOnly`).
+- **Alternativas descartadas:**
+  - *GDI / GDI+:* Descartado por falta de aceleración por hardware, renderizado subpixel deficiente de fuentes modernas e incapacidad para manejar tipografía compleja y DPI dinámico con la calidad y rendimiento de DirectWrite.
+  - *WebView2 / Chromium:* Estrictamente prohibido por la especificación (NF-09) para evitar inflar el binario y el consumo de RAM.
+
