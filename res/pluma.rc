@@ -1,0 +1,107 @@
+#include <windows.h>
+#include "resource.h"
+
+// Embedded Application Manifest
+1 24 "pluma.manifest"
+
+// Version Information
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+FILEFLAGS       VS_FF_DEBUG
+#else
+FILEFLAGS       0x0L
+#endif
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "Mauricio Bridge"
+            VALUE "FileDescription",  "Pluma - Editor Markdown nativo para Windows"
+            VALUE "FileVersion",      "0.1.0.0"
+            VALUE "InternalName",     "pluma"
+            VALUE "OriginalFilename", "pluma.exe"
+            VALUE "ProductName",      "Pluma"
+            VALUE "ProductVersion",   "0.1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+
+// Accelerator Table
+IDR_ACCELERATOR ACCELERATORS
+BEGIN
+    "N",            IDM_FILE_NEW,           VIRTKEY, CONTROL
+    "O",            IDM_FILE_OPEN,          VIRTKEY, CONTROL
+    "S",            IDM_FILE_SAVE,          VIRTKEY, CONTROL
+    "S",            IDM_FILE_SAVEAS,        VIRTKEY, CONTROL, SHIFT
+    "Z",            IDM_EDIT_UNDO,          VIRTKEY, CONTROL
+    "Y",            IDM_EDIT_REDO,          VIRTKEY, CONTROL
+    "F",            IDM_EDIT_FIND,          VIRTKEY, CONTROL
+    "H",            IDM_EDIT_REPLACE,       VIRTKEY, CONTROL
+    "G",            IDM_EDIT_GOTO,          VIRTKEY, CONTROL
+    "Z",            IDM_EDIT_WRAP,          VIRTKEY, ALT
+    "1",            IDM_VIEW_EDITOR_ONLY,   VIRTKEY, CONTROL
+    "2",            IDM_VIEW_SPLIT,         VIRTKEY, CONTROL
+    "3",            IDM_VIEW_PREVIEW_ONLY,  VIRTKEY, CONTROL
+END
+
+// Menu (Spanish Default)
+LANGUAGE LANG_SPANISH, SUBLANG_DEFAULT
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "&Archivo"
+    BEGIN
+        MENUITEM "&Nuevo\tCtrl+N",               IDM_FILE_NEW
+        MENUITEM "&Abrir...\tCtrl+O",            IDM_FILE_OPEN
+        MENUITEM "&Guardar\tCtrl+S",             IDM_FILE_SAVE
+        MENUITEM "Guardar &como...\tCtrl+Shift+S", IDM_FILE_SAVEAS
+        MENUITEM SEPARATOR
+        MENUITEM "&Salir",                       IDM_FILE_EXIT
+    END
+    POPUP "&Edición"
+    BEGIN
+        MENUITEM "&Deshacer\tCtrl+Z",            IDM_EDIT_UNDO
+        MENUITEM "&Rehacer\tCtrl+Y",             IDM_EDIT_REDO
+        MENUITEM SEPARATOR
+        MENUITEM "Cor&tar\tCtrl+X",              IDM_EDIT_CUT
+        MENUITEM "&Copiar\tCtrl+C",              IDM_EDIT_COPY
+        MENUITEM "&Pegar\tCtrl+V",               IDM_EDIT_PASTE
+        MENUITEM SEPARATOR
+        MENUITEM "&Buscar...\tCtrl+F",           IDM_EDIT_FIND
+        MENUITEM "&Reemplazar...\tCtrl+H",       IDM_EDIT_REPLACE
+        MENUITEM "&Ir a línea...\tCtrl+G",       IDM_EDIT_GOTO
+        MENUITEM SEPARATOR
+        MENUITEM "A&juste de línea\tAlt+Z",      IDM_EDIT_WRAP
+    END
+    POPUP "&Ver"
+    BEGIN
+        MENUITEM "Solo &editor\tCtrl+1",         IDM_VIEW_EDITOR_ONLY
+        MENUITEM "Vista &dividida\tCtrl+2",      IDM_VIEW_SPLIT
+        MENUITEM "Solo vista &previa\tCtrl+3",   IDM_VIEW_PREVIEW_ONLY
+    END
+    POPUP "A&yuda"
+    BEGIN
+        MENUITEM "&Acerca de Pluma...",          IDM_HELP_ABOUT
+    END
+END
+
+// String Tables (Spanish)
+LANGUAGE LANG_SPANISH, SUBLANG_DEFAULT
+STRINGTABLE
+BEGIN
+    IDS_APP_TITLE               "Pluma"
+    IDS_UNTITLED                "Sin título"
+    IDS_SAVE_CHANGES_PROMPT     "¿Desea guardar los cambios en %s?"
+    IDS_FILTER_MARKDOWN         "Archivos Markdown (*.md;*.markdown;*.mdown)\0*.md;*.markdown;*.mdown\0"
+    IDS_FILTER_ALL              "Todos los archivos (*.*)\0*.*\0"
+END
