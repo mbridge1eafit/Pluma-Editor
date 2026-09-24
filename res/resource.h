@@ -27,6 +27,13 @@
 #define IDM_VIEW_EDITOR_ONLY            40031
 #define IDM_VIEW_SPLIT                  40032
 #define IDM_VIEW_PREVIEW_ONLY           40033
+#define IDM_VIEW_OUTLINE                40034
+
+#define IDM_FORMAT_BOLD                 40051
+#define IDM_FORMAT_ITALIC               40052
+#define IDM_FORMAT_CODE                 40053
+#define IDM_FORMAT_STRIKE               40054
+#define IDM_FORMAT_LINK                 40055
 
 #define IDM_HELP_ABOUT                  40041
 

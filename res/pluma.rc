@@ -52,6 +52,12 @@ BEGIN
     "1",            IDM_VIEW_EDITOR_ONLY,   VIRTKEY, CONTROL
     "2",            IDM_VIEW_SPLIT,         VIRTKEY, CONTROL
     "3",            IDM_VIEW_PREVIEW_ONLY,  VIRTKEY, CONTROL
+    "B",            IDM_FORMAT_BOLD,        VIRTKEY, CONTROL
+    "I",            IDM_FORMAT_ITALIC,      VIRTKEY, CONTROL
+    "K",            IDM_FORMAT_LINK,        VIRTKEY, CONTROL
+    "C",            IDM_FORMAT_CODE,        VIRTKEY, CONTROL, SHIFT
+    "X",            IDM_FORMAT_STRIKE,      VIRTKEY, CONTROL, SHIFT
+    "O",            IDM_VIEW_OUTLINE,       VIRTKEY, CONTROL, SHIFT
 END
 
 // Menu (Spanish Default)
@@ -86,6 +92,15 @@ BEGIN
         MENUITEM "&Reemplazar...\tCtrl+H",       IDM_EDIT_REPLACE
         MENUITEM "&Ir a línea...\tCtrl+G",       IDM_EDIT_GOTO
         MENUITEM SEPARATOR
+        POPUP "&Formato"
+        BEGIN
+            MENUITEM "&Negrita\tCtrl+B",         IDM_FORMAT_BOLD
+            MENUITEM "&Cursiva\tCtrl+I",         IDM_FORMAT_ITALIC
+            MENUITEM "&Código\tCtrl+Shift+C",    IDM_FORMAT_CODE
+            MENUITEM "&Tachado\tCtrl+Shift+X",   IDM_FORMAT_STRIKE
+            MENUITEM "&Enlace...\tCtrl+K",       IDM_FORMAT_LINK
+        END
+        MENUITEM SEPARATOR
         MENUITEM "A&juste de línea\tAlt+Z",      IDM_EDIT_WRAP
     END
     POPUP "&Ver"
@@ -93,6 +108,8 @@ BEGIN
         MENUITEM "Solo &editor\tCtrl+1",         IDM_VIEW_EDITOR_ONLY
         MENUITEM "Vista &dividida\tCtrl+2",      IDM_VIEW_SPLIT
         MENUITEM "Solo vista &previa\tCtrl+3",   IDM_VIEW_PREVIEW_ONLY
+        MENUITEM SEPARATOR
+        MENUITEM "&Esquema de encabezados...\tCtrl+Shift+O", IDM_VIEW_OUTLINE
     END
     POPUP "A&yuda"
     BEGIN

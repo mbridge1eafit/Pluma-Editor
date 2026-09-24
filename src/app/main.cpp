@@ -3,6 +3,7 @@
 #endif
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>
 #include <shobjidl.h> // IFileDialog
 #include <shellapi.h>
 #include <filesystem>
@@ -15,6 +16,7 @@
 #include "../platform/theme.h"
 #include "../io/document_io.h"
 #include "../editor/editor_view.h"
+#include "../markdown/md4c_adapter.h"
 #include "../markdown/parse_worker.h"
 #include "../preview/preview_view.h"
 #include "../sync/sync_scroll.h"
@@ -26,7 +28,25 @@ namespace {
 
 constexpr wchar_t kWindowClassName[] = L"PlumaMainWindowClass";
 constexpr int kEditorControlId = 1010;
+constexpr int kStatusBarControlId = 1011;
+UINT g_uFindReplaceMsg = 0;
 bool g_firstPaintSignaled = false;
+
+std::wstring Utf8ToUtf16(std::string_view utf8) {
+    if (utf8.empty()) return {};
+    int count = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+    std::wstring result(count, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), result.data(), count);
+    return result;
+}
+
+std::string Utf16ToUtf8(std::wstring_view utf16) {
+    if (utf16.empty()) return {};
+    int count = WideCharToMultiByte(CP_UTF8, 0, utf16.data(), static_cast<int>(utf16.size()), nullptr, 0, nullptr, nullptr);
+    std::string result(count, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, utf16.data(), static_cast<int>(utf16.size()), result.data(), count, nullptr, nullptr);
+    return result;
+}
 
 enum class ViewMode {
     EditorOnly,
@@ -106,6 +126,7 @@ public:
     }
 
     HWND GetHwnd() const noexcept { return m_hwnd; }
+    HWND GetFindReplaceDialog() const noexcept { return m_hFindReplaceDlg; }
 
     void OpenFile(const std::filesystem::path& path) {
         if (!std::filesystem::exists(path)) {
@@ -122,6 +143,7 @@ public:
             m_editor.SetText(doc.contentUtf8);
             UpdateTitle();
             TriggerParse();
+            UpdateStatusBar();
         } catch (...) {
             MessageBoxW(m_hwnd, L"No se pudo abrir el archivo especificado.",
                         L"Error", MB_OK | MB_ICONERROR);
@@ -138,6 +160,7 @@ public:
             Pluma::IO::WriteDocumentAtomic(m_currentPath, content, m_encoding, m_lineEnding);
             m_editor.SetSavePoint();
             UpdateTitle();
+            UpdateStatusBar();
             return true;
         } catch (...) {
             MessageBoxW(m_hwnd, L"Error al guardar el archivo.",
@@ -327,6 +350,7 @@ public:
         m_editor.SetText("");
         UpdateTitle();
         TriggerParse();
+        UpdateStatusBar();
     }
 
     bool PromptSaveChanges() {
@@ -378,6 +402,15 @@ public:
         int h = rc.bottom - rc.top;
         if (w <= 0 || h <= 0) return;
 
+        int sbHeight = 0;
+        if (m_hwndStatusBar && IsWindowVisible(m_hwndStatusBar)) {
+            SendMessageW(m_hwndStatusBar, WM_SIZE, 0, 0);
+            RECT rcSB{};
+            GetWindowRect(m_hwndStatusBar, &rcSB);
+            sbHeight = rcSB.bottom - rcSB.top;
+        }
+        h = (std::max)(10, h - sbHeight);
+
         switch (m_viewMode) {
         case ViewMode::EditorOnly:
             m_editor.SetBounds(0, 0, w, h);
@@ -415,6 +448,255 @@ public:
         InvalidateRect(m_hwnd, nullptr, FALSE);
     }
 
+    void UpdateStatusBarParts() {
+        if (!m_hwndStatusBar) return;
+        int p0 = Pluma::Platform::ScaleForDpi(120, m_dpi);
+        int p1 = Pluma::Platform::ScaleForDpi(340, m_dpi);
+        int p2 = Pluma::Platform::ScaleForDpi(460, m_dpi);
+        int p3 = Pluma::Platform::ScaleForDpi(550, m_dpi);
+        int sbParts[5] = { p0, p1, p2, p3, -1 };
+        SendMessageW(m_hwndStatusBar, SB_SETPARTS, 5, reinterpret_cast<LPARAM>(sbParts));
+    }
+
+    void UpdateStatusBar() {
+        if (!m_hwndStatusBar) return;
+
+        auto pos = m_editor.GetCursorPosition();
+        auto stats = m_editor.GetDocumentStats();
+
+        wchar_t bufPos[64];
+        swprintf_s(bufPos, L"Lín %d, Col %d", pos.line, pos.column);
+        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(bufPos));
+
+        wchar_t bufStats[128];
+        swprintf_s(bufStats, L"%zu palabras, %zu caracteres", stats.words, stats.characters);
+        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 1, reinterpret_cast<LPARAM>(bufStats));
+
+        const wchar_t* encStr = L"UTF-8";
+        switch (m_encoding) {
+        case Pluma::IO::Encoding::Utf8: encStr = m_hasBom ? L"UTF-8 BOM" : L"UTF-8"; break;
+        case Pluma::IO::Encoding::Utf8Bom: encStr = L"UTF-8 BOM"; break;
+        case Pluma::IO::Encoding::Utf16LE: encStr = L"UTF-16 LE"; break;
+        case Pluma::IO::Encoding::Utf16BE: encStr = L"UTF-16 BE"; break;
+        }
+        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 2, reinterpret_cast<LPARAM>(encStr));
+
+        const wchar_t* leStr = (m_lineEnding == Pluma::IO::LineEnding::LF) ? L"LF" : L"CRLF";
+        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 3, reinterpret_cast<LPARAM>(leStr));
+
+        const wchar_t* modeStr = L"Vista dividida";
+        switch (m_viewMode) {
+        case ViewMode::EditorOnly: modeStr = L"Solo editor"; break;
+        case ViewMode::Split: modeStr = L"Vista dividida"; break;
+        case ViewMode::PreviewOnly: modeStr = L"Solo vista previa"; break;
+        }
+        SendMessageW(m_hwndStatusBar, SB_SETTEXTW, 4, reinterpret_cast<LPARAM>(modeStr));
+    }
+
+    void ShowOutlinePopup() {
+        HMENU hMenu = CreatePopupMenu();
+        if (!hMenu) return;
+
+        std::string mdText = m_editor.GetText();
+        auto tree = Pluma::Markdown::Md4cAdapter::Parse(mdText);
+
+        struct HeadingItem {
+            int line = 0;
+            int level = 0;
+            std::wstring title;
+
+            HeadingItem(int ln, int lvl, std::wstring t)
+                : line(ln), level(lvl), title(std::move(t)) {}
+        };
+        std::vector<HeadingItem> headings;
+
+        if (tree && tree->root) {
+            for (const auto& child : tree->root->children) {
+                if (child && child->type == Pluma::Markdown::BlockType::Heading) {
+                    std::string title;
+                    for (const auto& span : child->inlineContent) {
+                        title += span.text;
+                    }
+                    std::wstring wTitle = Utf8ToUtf16(title);
+                    if (wTitle.empty()) wTitle = L"(Sin título)";
+                    headings.emplace_back(child->startLine, child->level, std::move(wTitle));
+                }
+            }
+        }
+
+        if (headings.empty()) {
+            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"(No hay encabezados)");
+        } else {
+            for (size_t i = 0; i < headings.size(); ++i) {
+                std::wstring prefix(static_cast<size_t>((headings[i].level - 1) * 2), L' ');
+                for (int l = 0; l < headings[i].level; ++l) prefix += L'#';
+                prefix += L" ";
+                std::wstring itemText = prefix + headings[i].title;
+                AppendMenuW(hMenu, MF_STRING, 50000 + i, itemText.c_str());
+            }
+        }
+
+        POINT pt{};
+        GetCursorPos(&pt);
+        int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+        DestroyMenu(hMenu);
+
+        if (cmd >= 50000 && static_cast<size_t>(cmd - 50000) < headings.size()) {
+            int line = headings[cmd - 50000].line;
+            m_editor.GotoLine(line);
+            m_preview.ScrollToLine(line);
+            m_editor.SetFocus();
+            UpdateStatusBar();
+        }
+    }
+
+    void ShowGotoLineDialog() {
+        static bool s_registered = false;
+        if (!s_registered) {
+            WNDCLASSEXW wc{ sizeof(WNDCLASSEXW) };
+            wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) -> LRESULT {
+                auto* self = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+                switch (msg) {
+                case WM_CREATE: {
+                    auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
+                    CreateWindowW(L"STATIC", L"Número de línea:", WS_CHILD | WS_VISIBLE, 15, 15, 180, 20, hwnd, nullptr, nullptr, nullptr);
+                    HWND hEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER, 15, 40, 200, 24, hwnd, reinterpret_cast<HMENU>(101), nullptr, nullptr);
+                    CreateWindowW(L"BUTTON", L"Aceptar", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 35, 75, 75, 26, hwnd, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
+                    CreateWindowW(L"BUTTON", L"Cancelar", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 120, 75, 75, 26, hwnd, reinterpret_cast<HMENU>(IDCANCEL), nullptr, nullptr);
+                    SetFocus(hEdit);
+                    return 0;
+                }
+                case WM_COMMAND: {
+                    int id = LOWORD(wParam);
+                    if (id == IDOK) {
+                        wchar_t buf[32]{};
+                        GetDlgItemTextW(hwnd, 101, buf, 31);
+                        int line = _wtoi(buf);
+                        if (line > 0 && self) {
+                            self->m_editor.GotoLine(line);
+                            self->m_preview.ScrollToLine(line);
+                            self->m_editor.SetFocus();
+                            self->UpdateStatusBar();
+                        }
+                        DestroyWindow(hwnd);
+                        return 0;
+                    } else if (id == IDCANCEL) {
+                        DestroyWindow(hwnd);
+                        return 0;
+                    }
+                    break;
+                }
+                case WM_CLOSE:
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            };
+            wc.hInstance = m_hInstance;
+            wc.lpszClassName = L"PlumaGotoLineClass";
+            wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW);
+            wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+            RegisterClassExW(&wc);
+            s_registered = true;
+        }
+
+        RECT rc{};
+        GetWindowRect(m_hwnd, &rc);
+        int x = rc.left + (rc.right - rc.left - 245) / 2;
+        int y = rc.top + (rc.bottom - rc.top - 145) / 2;
+        HWND hDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PlumaGotoLineClass", L"Ir a línea",
+                                   WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+                                   x, y, 245, 145, m_hwnd, nullptr, m_hInstance, this);
+        EnableWindow(m_hwnd, FALSE);
+        MSG msg;
+        while (IsWindow(hDlg) && GetMessageW(&msg, nullptr, 0, 0)) {
+            if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
+                DestroyWindow(hDlg);
+                break;
+            }
+            if (!IsDialogMessageW(hDlg, &msg)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        EnableWindow(m_hwnd, TRUE);
+        SetFocus(m_hwnd);
+    }
+
+    void ShowFindDialog() {
+        if (m_hFindReplaceDlg) {
+            SetFocus(m_hFindReplaceDlg);
+            return;
+        }
+
+        ZeroMemory(&m_fr, sizeof(m_fr));
+        m_fr.lStructSize = sizeof(m_fr);
+        m_fr.hwndOwner = m_hwnd;
+        m_fr.lpstrFindWhat = m_szFindWhat;
+        m_fr.wFindWhatLen = ARRAYSIZE(m_szFindWhat);
+        m_fr.Flags = FR_DOWN;
+
+        m_hFindReplaceDlg = FindTextW(&m_fr);
+    }
+
+    void ShowReplaceDialog() {
+        if (m_hFindReplaceDlg) {
+            SetFocus(m_hFindReplaceDlg);
+            return;
+        }
+
+        ZeroMemory(&m_fr, sizeof(m_fr));
+        m_fr.lStructSize = sizeof(m_fr);
+        m_fr.hwndOwner = m_hwnd;
+        m_fr.lpstrFindWhat = m_szFindWhat;
+        m_fr.wFindWhatLen = ARRAYSIZE(m_szFindWhat);
+        m_fr.lpstrReplaceWith = m_szReplaceWith;
+        m_fr.wReplaceWithLen = ARRAYSIZE(m_szReplaceWith);
+        m_fr.Flags = FR_DOWN;
+
+        m_hFindReplaceDlg = ReplaceTextW(&m_fr);
+    }
+
+    void HandleFindReplaceMsg(FINDREPLACEW* pfr) {
+        if (!pfr) return;
+        if (pfr->Flags & FR_DIALOGTERM) {
+            m_hFindReplaceDlg = nullptr;
+            return;
+        }
+
+        std::string findStr = Utf16ToUtf8(pfr->lpstrFindWhat);
+        bool matchCase = (pfr->Flags & FR_MATCHCASE) != 0;
+        bool wholeWord = (pfr->Flags & FR_WHOLEWORD) != 0;
+        bool forward = (pfr->Flags & FR_DOWN) != 0;
+
+        if (pfr->Flags & FR_FINDNEXT) {
+            bool found = m_editor.FindNext(findStr, matchCase, wholeWord, false, forward);
+            if (!found) {
+                MessageBoxW(m_hwnd, L"No se encontraron más coincidencias.", L"Buscar", MB_OK | MB_ICONINFORMATION);
+            }
+        } else if (pfr->Flags & FR_REPLACE) {
+            std::string repStr = Utf16ToUtf8(pfr->lpstrReplaceWith);
+            sptr_t start = m_editor.Call(SCI_GETSELECTIONSTART);
+            sptr_t end = m_editor.Call(SCI_GETSELECTIONEND);
+            if (start != end) {
+                m_editor.Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(repStr.c_str()));
+                TriggerParse();
+                UpdateStatusBar();
+            }
+            m_editor.FindNext(findStr, matchCase, wholeWord, false, forward);
+        } else if (pfr->Flags & FR_REPLACEALL) {
+            std::string repStr = Utf16ToUtf8(pfr->lpstrReplaceWith);
+            int replaced = m_editor.ReplaceAll(findStr, repStr, matchCase, wholeWord, false);
+            if (replaced > 0) {
+                TriggerParse();
+                UpdateStatusBar();
+            }
+            std::wstring msg = L"Se reemplazaron " + std::to_wstring(replaced) + L" ocurrencia(s).";
+            MessageBoxW(m_hwnd, msg.c_str(), L"Reemplazar", MB_OK | MB_ICONINFORMATION);
+        }
+    }
+
 private:
     static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         MainWindow* self = nullptr;
@@ -434,6 +716,11 @@ private:
     }
 
     LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
+        if (msg == g_uFindReplaceMsg && g_uFindReplaceMsg != 0) {
+            HandleFindReplaceMsg(reinterpret_cast<FINDREPLACEW*>(lParam));
+            return 0;
+        }
+
         switch (msg) {
         case WM_CREATE: {
             bool darkMode = Pluma::Platform::IsSystemDarkMode();
@@ -443,6 +730,11 @@ private:
             GetClientRect(m_hwnd, &rc);
             int width = (std::max)(100, (int)(rc.right - rc.left));
             int height = (std::max)(100, (int)(rc.bottom - rc.top));
+
+            m_hwndStatusBar = CreateStatusWindowW(
+                WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
+                nullptr, m_hwnd, kStatusBarControlId);
+            UpdateStatusBarParts();
 
             m_editor.Create(m_hwnd, m_hInstance, kEditorControlId, 0, 0, width / 2, height);
             m_editor.ApplyTheme(darkMode);
@@ -455,12 +747,14 @@ private:
 
             RelayoutChildren();
             TriggerParse();
+            UpdateStatusBar();
             m_editor.SetFocus();
             return 0;
         }
 
         case WM_SIZE: {
             RelayoutChildren();
+            UpdateStatusBar();
             return 0;
         }
 
@@ -496,6 +790,7 @@ private:
                         TriggerParse();
                     }
                 } else if (scn->nmhdr.code == SCN_UPDATEUI) {
+                    UpdateStatusBar();
                     if (scn->updated & SC_UPDATE_V_SCROLL) {
                         if (m_syncScroll && m_viewMode == ViewMode::Split) {
                             m_syncScroll->OnEditorScrolled();
@@ -598,6 +893,7 @@ private:
         case WM_DPICHANGED: {
             m_dpi = HIWORD(wParam);
             m_preview.SetDpi(m_dpi);
+            UpdateStatusBarParts();
             auto* const prcNewWindow = reinterpret_cast<RECT*>(lParam);
             SetWindowPos(m_hwnd, nullptr,
                          prcNewWindow->left, prcNewWindow->top,
@@ -605,6 +901,7 @@ private:
                          prcNewWindow->bottom - prcNewWindow->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
             RelayoutChildren();
+            UpdateStatusBar();
             return 0;
         }
 
@@ -674,21 +971,52 @@ private:
             case IDM_EDIT_WRAP:
                 m_editor.ToggleWordWrap();
                 return 0;
+            case IDM_EDIT_FIND:
+                ShowFindDialog();
+                return 0;
+            case IDM_EDIT_REPLACE:
+                ShowReplaceDialog();
+                return 0;
+            case IDM_EDIT_GOTO:
+                ShowGotoLineDialog();
+                return 0;
+
+            case IDM_FORMAT_BOLD:
+                m_editor.InsertBold();
+                return 0;
+            case IDM_FORMAT_ITALIC:
+                m_editor.InsertItalic();
+                return 0;
+            case IDM_FORMAT_CODE:
+                m_editor.InsertCode();
+                return 0;
+            case IDM_FORMAT_STRIKE:
+                m_editor.InsertStrikethrough();
+                return 0;
+            case IDM_FORMAT_LINK:
+                m_editor.InsertLink();
+                return 0;
 
             case IDM_VIEW_EDITOR_ONLY:
                 m_viewMode = ViewMode::EditorOnly;
                 if (m_syncScroll) m_syncScroll->SetEnabled(false);
                 RelayoutChildren();
+                UpdateStatusBar();
                 return 0;
             case IDM_VIEW_SPLIT:
                 m_viewMode = ViewMode::Split;
                 if (m_syncScroll) m_syncScroll->SetEnabled(true);
                 RelayoutChildren();
+                UpdateStatusBar();
                 return 0;
             case IDM_VIEW_PREVIEW_ONLY:
                 m_viewMode = ViewMode::PreviewOnly;
                 if (m_syncScroll) m_syncScroll->SetEnabled(false);
                 RelayoutChildren();
+                UpdateStatusBar();
+                return 0;
+            case IDM_VIEW_OUTLINE:
+                ShowOutlinePopup();
                 return 0;
 
             case IDM_HELP_ABOUT:
@@ -743,6 +1071,12 @@ private:
     Pluma::IO::Encoding m_encoding = Pluma::IO::Encoding::Utf8;
     Pluma::IO::LineEnding m_lineEnding = Pluma::IO::LineEnding::CRLF;
     bool m_hasBom = false;
+
+    HWND m_hwndStatusBar = nullptr;
+    HWND m_hFindReplaceDlg = nullptr;
+    FINDREPLACEW m_fr{};
+    wchar_t m_szFindWhat[256] = L"";
+    wchar_t m_szReplaceWith[256] = L"";
 };
 
 } // namespace
@@ -754,8 +1088,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPWSTR /*l
     // Initialize Common Controls
     INITCOMMONCONTROLSEX iccex{};
     iccex.dwSize = sizeof(INITCOMMONCONTROLSEX);
-    iccex.dwICC = ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES;
+    iccex.dwICC = ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES;
     InitCommonControlsEx(&iccex);
+
+    g_uFindReplaceMsg = RegisterWindowMessageW(FINDMSGSTRINGW);
 
     // Check command line arguments for initial file opening (F-01, M1.5)
     std::filesystem::path initialFilePath;
@@ -776,6 +1112,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPWSTR /*l
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
+        HWND hDlg = mainWindow.GetFindReplaceDialog();
+        if (hDlg && IsDialogMessageW(hDlg, &msg)) {
+            continue;
+        }
         if (!hAccelTable || !TranslateAcceleratorW(mainWindow.GetHwnd(), hAccelTable, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);

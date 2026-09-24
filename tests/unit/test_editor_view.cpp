@@ -118,3 +118,106 @@ TEST_F(EditorViewTest, WordWrapAndThemeToggle) {
     editor.ApplyTheme(true);
     editor.ApplyTheme(false);
 }
+
+TEST_F(EditorViewTest, MarkdownFormattingShortcuts) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1005, 0, 0, 800, 600));
+
+    // Test Bold with selection
+    editor.SetText("Hello world");
+    editor.Call(SCI_SETSEL, 0, 5); // Select "Hello"
+    editor.InsertBold();
+    EXPECT_EQ(editor.GetText(), "**Hello** world");
+
+    // Test Italic with selection
+    editor.SetText("Hello world");
+    editor.Call(SCI_SETSEL, 6, 11); // Select "world"
+    editor.InsertItalic();
+    EXPECT_EQ(editor.GetText(), "Hello *world*");
+
+    // Test Strikethrough with selection
+    editor.SetText("Hello world");
+    editor.Call(SCI_SETSEL, 0, 11); // Select "Hello world"
+    editor.InsertStrikethrough();
+    EXPECT_EQ(editor.GetText(), "~~Hello world~~");
+
+    // Test Inline Code with single line
+    editor.SetText("code here");
+    editor.Call(SCI_SETSEL, 0, 4); // Select "code"
+    editor.InsertCode();
+    EXPECT_EQ(editor.GetText(), "`code` here");
+
+    // Test Fenced Code block with multi line
+    editor.SetText("line1\nline2");
+    editor.Call(SCI_SETSEL, 0, 11); // Select all
+    editor.InsertCode();
+    EXPECT_EQ(editor.GetText(), "```\nline1\nline2\n```");
+
+    // Test Link with selection
+    editor.SetText("Click here");
+    editor.Call(SCI_SETSEL, 0, 5); // Select "Click"
+    editor.InsertLink();
+    EXPECT_EQ(editor.GetText(), "[Click](url) here");
+
+    // Test Empty selection formatting
+    editor.SetText("");
+    editor.InsertBold();
+    EXPECT_EQ(editor.GetText(), "****");
+    sptr_t pos = editor.Call(SCI_GETCURRENTPOS);
+    EXPECT_EQ(pos, 2); // Cursor should be between ** and **
+}
+
+TEST_F(EditorViewTest, EditorMetricsAndCursorPosition) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1006, 0, 0, 800, 600));
+
+    editor.SetText("First line\nSecond line has more words\nThird");
+
+    auto stats = editor.GetDocumentStats();
+    EXPECT_EQ(stats.words, 8); // "First", "line", "Second", "line", "has", "more", "words", "Third"
+    EXPECT_EQ(stats.characters, editor.GetText().size());
+
+    // Cursor position at start
+    editor.Call(SCI_GOTOPOS, 0);
+    auto cpos1 = editor.GetCursorPosition();
+    EXPECT_EQ(cpos1.line, 1);
+    EXPECT_EQ(cpos1.column, 1);
+
+    // Cursor position on second line
+    editor.GotoLine(2); // 1-indexed line 2 = second line
+    auto cpos2 = editor.GetCursorPosition();
+    EXPECT_EQ(cpos2.line, 2);
+    EXPECT_EQ(cpos2.column, 1);
+}
+
+TEST_F(EditorViewTest, BidirectionalFind) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1007, 0, 0, 800, 600));
+
+    editor.SetText("alpha beta gamma beta delta");
+
+    // Forward search
+    editor.Call(SCI_GOTOPOS, 0);
+    bool found1 = editor.FindNext("beta", false, false, false, true);
+    EXPECT_TRUE(found1);
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONSTART), 6);
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONEND), 10);
+
+    // Next forward search finds second "beta"
+    bool found2 = editor.FindNext("beta", false, false, false, true);
+    EXPECT_TRUE(found2);
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONSTART), 17);
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONEND), 21);
+
+    // Backward search from second beta finds first beta
+    bool found3 = editor.FindNext("beta", false, false, false, false);
+    EXPECT_TRUE(found3);
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONSTART), 6);
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONEND), 10);
+}

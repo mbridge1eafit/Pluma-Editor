@@ -95,4 +95,36 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
   - *Sincronización por porcentaje lineal de altura:* Descartada porque diferentes densidades tipográficas entre código fuente y texto renderizado provocan desfasajes notables en documentos reales, violando el criterio de aceptación 2 de F-14.
   - *Generación de PDF delegada exclusivamente a spooler de Windows ("Microsoft Print to PDF"):* Descartada como única opción debido a fallos cuando el servicio Spooler está desactivado por políticas corporativas o entornos restringidos. El generador vectorial nativo proporciona un rendimiento < 5 ms, 100 % de fiabilidad y salida de vectores pura.
 
+---
+
+## [2026-09-24] Decisión 009: Integración completa con el SO y pulido final (M5, F-04, F-11, F-12, F-13)
+
+- **Contexto:** Los requerimientos F-04, F-11, F-12 y F-13 exigen pulido e integración total con el entorno nativo de Windows:
+  - F-04: Cuadros de diálogo y atajos de teclado para búsqueda y reemplazo (`Ctrl+F`, `Ctrl+H`), búsqueda bidireccional (arriba/abajo), coincidencias y reemplazo individual o global. Diálogo para ir a línea (`Ctrl+G`).
+  - F-11: Barra de estado nativa con 5 indicadores clave: posición del cursor (Lín, Col), conteo en vivo de palabras y caracteres, codificación (UTF-8, UTF-8 BOM, UTF-16 LE/BE), salto de línea (CRLF/LF) y modo de vista actual.
+  - F-12: Atajos directos de formato Markdown (`Ctrl+B`, `Ctrl+I`, `Ctrl+Shift+C`, `Ctrl+Shift+X`, `Ctrl+K`) con inserción de delimitadores y selección inteligente.
+  - F-13: Menú/popup de esquema de encabezados del documento (`Ctrl+Shift+O`) con jerarquía visual H1-H6 y salto sincronizado al encabezado seleccionado.
+- **Decisión:**
+  - *Barra de estado Win32 (`msctls_statusbar32`):*
+    - Se crea en `MainWindow::HandleMessage` con clase `STATUSCLASSNAME` y flag `SBARS_SIZEGRIP`.
+    - La partición de paneles se escala dinámicamente según los DPI del monitor en `UpdateStatusBarParts()` (`WM_CREATE` y `WM_DPICHANGED`), garantizando visualización sin recortes en monitores 4K o configuraciones multimonitor con factores de escala heterogéneos.
+    - Se actualiza en `WM_SIZE`, `OpenFile`, `SaveFile`, `NewFile`, `SCN_UPDATEUI` y al cambiar el modo de visualización.
+  - *Búsqueda y Reemplazo del sistema (`commdlg.h`):*
+    - Se implementa mediante los cuadros de diálogo estándar de Windows `FindTextW` y `ReplaceTextW` registrados vía `RegisterWindowMessageW(FINDMSGSTRINGW)` y despachados en el bucle principal de mensajes con `IsDialogMessageW`.
+    - `EditorView::FindNext` soporta búsqueda bidireccional (adelante y atrás) con `SCFIND_MATCHCASE` y `SCFIND_WHOLEWORD`, búsqueda circular (wrap-around) y selección visual de la coincidencia activa con `SCI_SCROLLCARET`.
+    - `EditorView::ReplaceAll` agrupa todas las sustituciones en una única transacción de deshacer (`SCI_BEGINUNDOACTION` / `SCI_ENDUNDOACTION`), reportando el número exacto de reemplazos efectuados y actualizando el parseo y la barra de estado.
+    - `ShowGotoLineDialog` implementa un cuadro modal nativo ligero Win32 que valida el número de línea 1-indexed y posiciona simultáneamente el cursor en el editor Scintilla y el scroll en la vista previa Direct2D.
+  - *Atajos de formato Markdown (F-12):*
+    - Métodos `WrapSelection`, `InsertBold`, `InsertItalic`, `InsertCode`, `InsertStrikethrough` e `InsertLink` en `EditorView`.
+    - Si existe una selección de texto activa, los delimitadores la envuelven preservando o seleccionando los segmentos relevantes (por ejemplo, en `InsertLink` se envuelve `[texto](url)` dejando seleccionada la palabra `url` para sobrescritura inmediata).
+    - Si la selección abarca múltiples líneas, `InsertCode` envuelve automáticamente con bloques cercados triple backtick (` ```\n...\n``` `); si es de una sola línea, aplica código en línea con acentos graves simples (`` `...` ``).
+    - Si no hay selección, se insertan los delimitadores correspondientes y se posiciona el cursor en el centro para escritura inmediata.
+  - *Esquema del documento flotante / TOC (F-13):*
+    - `ShowOutlinePopup` ejecuta `Md4cAdapter::Parse` sobre el texto actual y extrae los encabezados de nivel H1 a H6 con su número de línea de origen.
+    - Construye un menú flotante jerárquico `TrackPopupMenu` con indentación visual y prefijos (`#`, `##`, etc.).
+    - Al hacer clic en un encabezado, navega instantáneamente al número de línea tanto en el editor como en la vista previa.
+- **Alternativas descartadas:**
+  - *Controles de interfaz de usuario de terceros o frameworks web embebidos:* Rechazados de plano según la arquitectura central del proyecto. Todos los diálogos, menús y barras de estado emplean las APIs nativas Win32 C++20 con coste cero en dependencias externas.
+
+
 
