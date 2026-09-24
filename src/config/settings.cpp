@@ -229,6 +229,7 @@ void Settings::Sanitize() {
     previewZoom = std::clamp(previewZoom, kMinPreviewZoom, kMaxPreviewZoom);
     tabWidth = std::clamp(tabWidth, kMinTabWidth, kMaxTabWidth);
     outlineWidth = std::clamp(outlineWidth, kMinOutlineWidth, kMaxOutlineWidth);
+    explorerWidth = std::clamp(explorerWidth, kMinExplorerWidth, kMaxExplorerWidth);
     if (!std::isfinite(splitRatio)) splitRatio = 0.5f;
     splitRatio = std::clamp(splitRatio, kMinSplitRatio, kMaxSplitRatio);
     pdfMarginMm = std::clamp(pdfMarginMm, kMinPdfMarginMm, kMaxPdfMarginMm);
@@ -260,9 +261,12 @@ Settings ParseSettings(std::string_view iniUtf8) {
     ReadEnum(v, "view.startupview", s.startupView, kStartupViews);
     ReadEnum(v, "view.lastview", s.lastView, kLayouts);
     ReadBool(v, "view.showoutline", s.showOutline);
+    ReadBool(v, "view.showexplorer", s.showExplorer);
     ReadBool(v, "view.showstatusbar", s.showStatusBar);
+    ReadBool(v, "view.showtoolbar", s.showToolbar);
     ReadBool(v, "view.syncscroll", s.syncScroll);
     ReadInt(v, "view.outlinewidth", s.outlineWidth);
+    ReadInt(v, "view.explorerwidth", s.explorerWidth);
     ReadFloat(v, "view.splitratio", s.splitRatio);
 
     ReadBool(v, "window.remember", s.rememberWindow);
@@ -310,9 +314,12 @@ std::string SerializeSettings(const Settings& s) {
     w.Value("StartupView", EnumName(s.startupView, kStartupViews));
     w.Value("LastView", EnumName(s.lastView, kLayouts));
     w.Bool("ShowOutline", s.showOutline);
+    w.Bool("ShowExplorer", s.showExplorer);
     w.Bool("ShowStatusBar", s.showStatusBar);
+    w.Bool("ShowToolbar", s.showToolbar);
     w.Bool("SyncScroll", s.syncScroll);
     w.Int("OutlineWidth", s.outlineWidth);
+    w.Int("ExplorerWidth", s.explorerWidth);
     w.Float("SplitRatio", s.splitRatio);
 
     w.Section("Window");

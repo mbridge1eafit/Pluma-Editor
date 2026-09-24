@@ -53,6 +53,10 @@ set(PLUMA_SOURCES
     src/config/settings.cpp
     src/outline/outline_panel.h
     src/outline/outline_panel.cpp
+    src/explorer/file_explorer_panel.h
+    src/explorer/file_explorer_panel.cpp
+    src/app/toolbar.h
+    src/app/toolbar.cpp
     src/platform/file_association.h
     src/platform/file_association.cpp
     src/platform/dpi.h

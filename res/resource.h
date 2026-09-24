@@ -42,6 +42,8 @@
 
 #define IDM_VIEW_OUTLINE_PANEL          40035
 #define IDM_VIEW_STATUSBAR              40036
+#define IDM_VIEW_EXPLORER_PANEL         40037
+#define IDM_VIEW_TOOLBAR                40038
 
 #define IDM_SETTINGS_PREFERENCES        40071
 #define IDM_SETTINGS_DEFAULT_EDITOR     40072
