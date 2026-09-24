@@ -2,6 +2,20 @@
 
 Pluma es un editor de Markdown 100 % nativo para Windows diseñado para abrir en menos de 100 ms y ocupar menos de 3 MB en disco, con vista previa renderizada sin navegador embebido (sin Chromium, sin WebView2, sin .NET).
 
+## Descargas e Instalación
+
+1. Descarga la versión más reciente (`pluma-vX.X.X-windows-x64.zip`) desde [GitHub Releases](https://github.com/mbridge1eafit/Pluma-Editor/releases).
+2. **Verificar la integridad (Checksum SHA-256):**
+   Compara el hash del archivo descargado con el publicado en `SHA256SUMS.txt`:
+   ```powershell
+   Get-FileHash .\pluma-*-windows-x64.zip -Algorithm SHA256
+   ```
+3. **Desbloquear en Windows:**
+   Al ser un software open-source sin firma comercial de pago, Windows puede marcar el archivo descargado de internet con una advertencia de SmartScreen:
+   - Haz clic derecho sobre el archivo `.zip` descargado ➔ **Propiedades** ➔ marca la casilla **"Desbloquear"** (*Unblock*) ➔ **Aceptar**.
+   - O por PowerShell: `Unblock-File .\pluma-*-windows-x64.zip`
+4. Descomprime y ejecuta `pluma.exe` (es completamente portable y no requiere instalación).
+
 ## Requisitos de compilación
 
 - **Sistema Operativo:** Windows 10 (versión 1809 o superior) o Windows 11 (x64)
