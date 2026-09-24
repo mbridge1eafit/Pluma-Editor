@@ -54,20 +54,21 @@ enum class ViewMode {
     PreviewOnly
 };
 
+static HANDLE g_hStartupEvent = nullptr;
+
 void SignalStartupEvent() {
     if (g_firstPaintSignaled) {
         return;
     }
-    g_firstPaintSignaled = true;
 
     // Signal named event for startup benchmark if listening
     DWORD pid = GetCurrentProcessId();
     std::wstring eventName = L"Local\\PlumaStartupEvent_" + std::to_wstring(pid);
-    HANDLE hEvent = OpenEventW(EVENT_MODIFY_STATE, FALSE, eventName.c_str());
-    if (hEvent) {
-        SetEvent(hEvent);
-        CloseHandle(hEvent);
+    g_hStartupEvent = CreateEventW(nullptr, TRUE, FALSE, eventName.c_str());
+    if (g_hStartupEvent) {
+        SetEvent(g_hStartupEvent);
     }
+    g_firstPaintSignaled = true;
 }
 
 class MainWindow {
@@ -566,12 +567,48 @@ public:
                 switch (msg) {
                 case WM_CREATE: {
                     auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
-                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-                    HFONT hFont = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-                    HWND hStatic = CreateWindowW(L"STATIC", L"Número de línea:", WS_CHILD | WS_VISIBLE, 15, 15, 180, 20, hwnd, nullptr, nullptr, nullptr);
-                    HWND hEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER, 15, 40, 200, 24, hwnd, reinterpret_cast<HMENU>(101), nullptr, nullptr);
-                    HWND hOk = CreateWindowW(L"BUTTON", L"Aceptar", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 35, 75, 75, 26, hwnd, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
-                    HWND hCancel = CreateWindowW(L"BUTTON", L"Cancelar", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 120, 75, 75, 26, hwnd, reinterpret_cast<HMENU>(IDCANCEL), nullptr, nullptr);
+                    self = reinterpret_cast<MainWindow*>(cs->lpCreateParams);
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+
+                    bool dark = self && self->IsDarkMode();
+                    Pluma::Platform::ApplyThemeToWindow(hwnd, dark);
+
+                    UINT dpi = self ? self->m_dpi : 96;
+                    HFONT hFont = CreateFontW(
+                        -Pluma::Platform::ScaleForDpi(13, dpi), 0, 0, 0,
+                        FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+
+                    int pad = Pluma::Platform::ScaleForDpi(16, dpi);
+                    int lblH = Pluma::Platform::ScaleForDpi(20, dpi);
+                    int editH = Pluma::Platform::ScaleForDpi(26, dpi);
+                    int btnW = Pluma::Platform::ScaleForDpi(84, dpi);
+                    int btnH = Pluma::Platform::ScaleForDpi(28, dpi);
+                    int spacing = Pluma::Platform::ScaleForDpi(12, dpi);
+
+                    HWND hStatic = CreateWindowW(L"STATIC", L"Número de línea:", WS_CHILD | WS_VISIBLE,
+                                                 pad, pad, 200, lblH, hwnd, nullptr, nullptr, nullptr);
+                    HWND hEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
+                                                 pad, pad + lblH + 4, 210, editH, hwnd,
+                                                 reinterpret_cast<HMENU>(101), nullptr, nullptr);
+                    int btnY = pad + lblH + editH + spacing;
+                    HWND hOk = CreateWindowW(L"BUTTON", L"Aceptar",
+                                             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                                             pad + 15, btnY, btnW, btnH, hwnd,
+                                             reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
+                    HWND hCancel = CreateWindowW(L"BUTTON", L"Cancelar",
+                                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                                 pad + 15 + btnW + 12, btnY, btnW, btnH, hwnd,
+                                                 reinterpret_cast<HMENU>(IDCANCEL), nullptr, nullptr);
+
+                    if (dark) {
+                        SetWindowTheme(hEdit, L"DarkMode_Explorer", nullptr);
+                        SetWindowTheme(hOk, L"DarkMode_Explorer", nullptr);
+                        SetWindowTheme(hCancel, L"DarkMode_Explorer", nullptr);
+                    }
+
                     if (hFont) {
                         SendMessageW(hStatic, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
                         SendMessageW(hEdit, WM_SETFONT, reinterpret_cast<WPARAM>(hFont), TRUE);
@@ -580,6 +617,42 @@ public:
                     }
                     SetFocus(hEdit);
                     return 0;
+                }
+                case WM_ERASEBKGND: {
+                    HDC hdc = reinterpret_cast<HDC>(wParam);
+                    RECT rc;
+                    GetClientRect(hwnd, &rc);
+                    bool dark = self && self->IsDarkMode();
+                    HBRUSH hbr = CreateSolidBrush(dark ? RGB(32, 32, 32) : RGB(243, 243, 243));
+                    FillRect(hdc, &rc, hbr);
+                    DeleteObject(hbr);
+                    return 1;
+                }
+                case WM_CTLCOLORSTATIC: {
+                    HDC hdc = reinterpret_cast<HDC>(wParam);
+                    SetBkMode(hdc, TRANSPARENT);
+                    bool dark = self && self->IsDarkMode();
+                    SetTextColor(hdc, dark ? RGB(225, 225, 225) : RGB(30, 30, 30));
+                    return reinterpret_cast<LRESULT>(GetStockObject(NULL_BRUSH));
+                }
+                case WM_CTLCOLOREDIT: {
+                    HDC hdc = reinterpret_cast<HDC>(wParam);
+                    bool dark = self && self->IsDarkMode();
+                    if (dark) {
+                        SetBkColor(hdc, RGB(42, 42, 42));
+                        SetTextColor(hdc, RGB(255, 255, 255));
+                        static HBRUSH s_hbrEdit = CreateSolidBrush(RGB(42, 42, 42));
+                        return reinterpret_cast<LRESULT>(s_hbrEdit);
+                    }
+                    return DefWindowProcW(hwnd, msg, wParam, lParam);
+                }
+                case WM_CTLCOLORBTN: {
+                    bool dark = self && self->IsDarkMode();
+                    if (dark) {
+                        static HBRUSH s_hbrBtn = CreateSolidBrush(RGB(32, 32, 32));
+                        return reinterpret_cast<LRESULT>(s_hbrBtn);
+                    }
+                    return DefWindowProcW(hwnd, msg, wParam, lParam);
                 }
                 case WM_COMMAND: {
                     int id = LOWORD(wParam);
@@ -609,19 +682,22 @@ public:
             };
             wc.hInstance = m_hInstance;
             wc.lpszClassName = L"PlumaGotoLineClass";
-            wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW);
+            wc.hbrBackground = nullptr;
             wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
             RegisterClassExW(&wc);
             s_registered = true;
         }
 
+        int dlgW = Pluma::Platform::ScaleForDpi(260, m_dpi);
+        int dlgH = Pluma::Platform::ScaleForDpi(160, m_dpi);
+
         RECT rc{};
         GetWindowRect(m_hwnd, &rc);
-        int x = rc.left + (rc.right - rc.left - 245) / 2;
-        int y = rc.top + (rc.bottom - rc.top - 145) / 2;
+        int x = rc.left + (rc.right - rc.left - dlgW) / 2;
+        int y = rc.top + (rc.bottom - rc.top - dlgH) / 2;
         HWND hDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PlumaGotoLineClass", L"Ir a línea",
                                    WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-                                   x, y, 245, 145, m_hwnd, nullptr, m_hInstance, this);
+                                   x, y, dlgW, dlgH, m_hwnd, nullptr, m_hInstance, this);
         EnableWindow(m_hwnd, FALSE);
         MSG msg;
         while (IsWindow(hDlg) && GetMessageW(&msg, nullptr, 0, 0)) {
@@ -652,6 +728,9 @@ public:
         m_fr.Flags = FR_DOWN;
 
         m_hFindReplaceDlg = FindTextW(&m_fr);
+        if (m_hFindReplaceDlg) {
+            Pluma::Platform::ApplyThemeToWindow(m_hFindReplaceDlg, IsDarkMode());
+        }
     }
 
     void ShowReplaceDialog() {
@@ -670,6 +749,9 @@ public:
         m_fr.Flags = FR_DOWN;
 
         m_hFindReplaceDlg = ReplaceTextW(&m_fr);
+        if (m_hFindReplaceDlg) {
+            Pluma::Platform::ApplyThemeToWindow(m_hFindReplaceDlg, IsDarkMode());
+        }
     }
 
     void HandleFindReplaceMsg(FINDREPLACEW* pfr) {
@@ -730,6 +812,11 @@ private:
     }
 
     LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
+        LRESULT uahLr = 0;
+        if (Pluma::Platform::HandleUAHMenuBarMessage(m_hwnd, msg, wParam, lParam, &uahLr, IsDarkMode())) {
+            return uahLr;
+        }
+
         if (msg == g_uFindReplaceMsg && g_uFindReplaceMsg != 0) {
             HandleFindReplaceMsg(reinterpret_cast<FINDREPLACEW*>(lParam));
             return 0;
@@ -737,7 +824,8 @@ private:
 
         switch (msg) {
         case WM_CREATE: {
-            bool darkMode = Pluma::Platform::IsSystemDarkMode();
+            bool darkMode = IsDarkMode();
+            Pluma::Platform::SetPreferredThemeMode(m_appTheme);
             Pluma::Platform::ApplyThemeToWindow(m_hwnd, darkMode);
 
             RECT rc;
@@ -748,6 +836,7 @@ private:
             m_hwndStatusBar = CreateStatusWindowW(
                 WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
                 nullptr, m_hwnd, kStatusBarControlId);
+            SetWindowSubclass(m_hwndStatusBar, StatusBarSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
             UpdateStatusBarParts();
 
             m_editor.Create(m_hwnd, m_hInstance, kEditorControlId, 0, 0, width / 2, height);
@@ -762,6 +851,7 @@ private:
             RelayoutChildren();
             TriggerParse();
             UpdateStatusBar();
+            UpdateThemeMenuRadio();
             m_editor.SetFocus();
             return 0;
         }
@@ -858,7 +948,37 @@ private:
                 }
                 return 0;
             }
+
+            if (m_viewMode == ViewMode::Split) {
+                int mouseX = LOWORD(lParam);
+                RECT rc{};
+                GetClientRect(m_hwnd, &rc);
+                int clientW = static_cast<int>(rc.right - rc.left);
+                int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
+                int editorW = static_cast<int>((clientW - dividerW) * m_splitRatio);
+                editorW = (std::clamp)(editorW, 50, (std::max)(50, clientW - dividerW - 50));
+
+                bool hovering = (mouseX >= editorW && mouseX <= editorW + dividerW);
+                if (hovering != m_isHoveringSplitter) {
+                    m_isHoveringSplitter = hovering;
+                    RECT divRc{ editorW, 0, editorW + dividerW, static_cast<int>(rc.bottom - rc.top) };
+                    InvalidateRect(m_hwnd, &divRc, FALSE);
+
+                    if (hovering) {
+                        TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, m_hwnd, 0 };
+                        TrackMouseEvent(&tme);
+                    }
+                }
+            }
             break;
+        }
+
+        case WM_MOUSELEAVE: {
+            if (m_isHoveringSplitter) {
+                m_isHoveringSplitter = false;
+                InvalidateRect(m_hwnd, nullptr, FALSE);
+            }
+            return 0;
         }
 
         case WM_LBUTTONUP: {
@@ -894,13 +1014,16 @@ private:
         }
 
         case WM_SETTINGCHANGE: {
-            if (lParam && wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0) {
-                bool darkMode = Pluma::Platform::IsSystemDarkMode();
-                Pluma::Platform::ApplyThemeToWindow(m_hwnd, darkMode);
-                m_editor.ApplyTheme(darkMode);
-                m_preview.SetDarkMode(darkMode);
-                InvalidateRect(m_hwnd, nullptr, TRUE);
+            if (Pluma::Platform::IsColorSchemeChangeMessage(lParam)) {
+                if (m_appTheme == Pluma::Platform::AppTheme::System) {
+                    ApplyCurrentTheme();
+                }
             }
+            return 0;
+        }
+
+        case WM_THEMECHANGED: {
+            ApplyCurrentTheme();
             return 0;
         }
 
@@ -931,11 +1054,21 @@ private:
                 editorW = (std::clamp)(editorW, 50, (std::max)(50, clientW - dividerW - 50));
                 RECT divRc{ editorW, 0, editorW + dividerW, static_cast<int>(rc.bottom - rc.top) };
 
-                bool dark = Pluma::Platform::IsSystemDarkMode();
-                COLORREF divColor = dark ? RGB(45, 45, 45) : RGB(225, 225, 225);
-                HBRUSH hbr = CreateSolidBrush(divColor);
+                bool dark = IsDarkMode();
+                COLORREF divBg = dark ? RGB(30, 30, 30) : RGB(243, 243, 243);
+                COLORREF divLine = dark ? RGB(45, 45, 45) : RGB(220, 220, 220);
+                if (m_isDraggingSplitter || m_isHoveringSplitter) {
+                    divLine = dark ? RGB(86, 156, 214) : RGB(0, 120, 215);
+                }
+                HBRUSH hbr = CreateSolidBrush(divBg);
                 FillRect(hdc, &divRc, hbr);
                 DeleteObject(hbr);
+
+                int midX = divRc.left + (divRc.right - divRc.left) / 2;
+                RECT lineRc{ midX, 0, midX + 1, divRc.bottom };
+                HBRUSH hbrLine = CreateSolidBrush(divLine);
+                FillRect(hdc, &lineRc, hbrLine);
+                DeleteObject(hbrLine);
             }
             EndPaint(m_hwnd, &ps);
             SignalStartupEvent();
@@ -1033,6 +1166,16 @@ private:
                 ShowOutlinePopup();
                 return 0;
 
+            case IDM_VIEW_THEME_SYSTEM:
+                SetThemeMode(Pluma::Platform::AppTheme::System);
+                return 0;
+            case IDM_VIEW_THEME_DARK:
+                SetThemeMode(Pluma::Platform::AppTheme::Dark);
+                return 0;
+            case IDM_VIEW_THEME_LIGHT:
+                SetThemeMode(Pluma::Platform::AppTheme::Light);
+                return 0;
+
             case IDM_HELP_ABOUT:
                 MessageBoxW(m_hwnd,
                             L"Pluma - Editor Markdown nativo para Windows v0.1\n\n"
@@ -1062,6 +1205,170 @@ private:
             break;
         }
         return DefWindowProcW(m_hwnd, msg, wParam, lParam);
+    }
+
+    Pluma::Platform::AppTheme m_appTheme = Pluma::Platform::AppTheme::System;
+    bool m_isHoveringSplitter = false;
+
+    bool IsDarkMode() const {
+        return Pluma::Platform::IsDarkModeActive(m_appTheme);
+    }
+
+    void SetThemeMode(Pluma::Platform::AppTheme theme) {
+        if (m_appTheme == theme) return;
+        m_appTheme = theme;
+        ApplyCurrentTheme();
+    }
+
+    void ApplyCurrentTheme() {
+        static bool s_isApplyingTheme = false;
+        if (s_isApplyingTheme) return;
+        struct ThemeGuard {
+            bool& ref;
+            explicit ThemeGuard(bool& r) : ref(r) { ref = true; }
+            ~ThemeGuard() { ref = false; }
+        } guard(s_isApplyingTheme);
+
+        bool darkMode = IsDarkMode();
+        Pluma::Platform::SetPreferredThemeMode(m_appTheme);
+        Pluma::Platform::ApplyThemeToWindow(m_hwnd, darkMode);
+        m_editor.ApplyTheme(darkMode);
+        m_preview.SetDarkMode(darkMode);
+
+        UpdateThemeMenuRadio();
+        Pluma::Platform::RefreshWindowFrame(m_hwnd);
+
+        if (m_hwndStatusBar) {
+            InvalidateRect(m_hwndStatusBar, nullptr, TRUE);
+        }
+        InvalidateRect(m_hwnd, nullptr, TRUE);
+        UpdateStatusBar();
+    }
+
+    void UpdateThemeMenuRadio() {
+        HMENU hMenu = GetMenu(m_hwnd);
+        if (hMenu) {
+            UINT checkId = IDM_VIEW_THEME_SYSTEM;
+            if (m_appTheme == Pluma::Platform::AppTheme::Dark) checkId = IDM_VIEW_THEME_DARK;
+            else if (m_appTheme == Pluma::Platform::AppTheme::Light) checkId = IDM_VIEW_THEME_LIGHT;
+            CheckMenuRadioItem(hMenu, IDM_VIEW_THEME_SYSTEM, IDM_VIEW_THEME_LIGHT, checkId, MF_BYCOMMAND);
+        }
+    }
+
+    static LRESULT CALLBACK StatusBarSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+                                                  UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+        auto* self = reinterpret_cast<MainWindow*>(dwRefData);
+        if (!self) {
+            return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+        }
+
+        switch (uMsg) {
+        case WM_ERASEBKGND:
+            return 1;
+
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hWnd, &ps);
+            RECT rcClient;
+            GetClientRect(hWnd, &rcClient);
+            if (rcClient.right <= 0 || rcClient.bottom <= 0) {
+                EndPaint(hWnd, &ps);
+                return 0;
+            }
+
+            HDC memDC = CreateCompatibleDC(hdc);
+            HBITMAP memBmp = CreateCompatibleBitmap(hdc, rcClient.right, rcClient.bottom);
+            HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDC, memBmp));
+
+            bool dark = self->IsDarkMode();
+            COLORREF bgCol = dark ? RGB(26, 26, 26) : RGB(243, 243, 243);
+            COLORREF borderCol = dark ? RGB(45, 45, 45) : RGB(220, 220, 220);
+            COLORREF textCol = dark ? RGB(200, 200, 200) : RGB(40, 40, 40);
+            COLORREF sepCol = dark ? RGB(50, 50, 50) : RGB(215, 215, 215);
+
+            // Fill background
+            HBRUSH hbrBg = CreateSolidBrush(bgCol);
+            FillRect(memDC, &rcClient, hbrBg);
+            DeleteObject(hbrBg);
+
+            // Top hairline border
+            RECT rcTopBorder = { 0, 0, rcClient.right, 1 };
+            HBRUSH hbrBorder = CreateSolidBrush(borderCol);
+            FillRect(memDC, &rcTopBorder, hbrBorder);
+            DeleteObject(hbrBorder);
+
+            // Font
+            HFONT hFont = CreateFontW(
+                -Pluma::Platform::ScaleForDpi(12, self->m_dpi), 0, 0, 0,
+                FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            HFONT oldFont = static_cast<HFONT>(SelectObject(memDC, hFont));
+            SetBkMode(memDC, TRANSPARENT);
+            SetTextColor(memDC, textCol);
+
+            int partCount = static_cast<int>(SendMessageW(hWnd, SB_GETPARTS, 0, 0));
+            for (int i = 0; i < partCount; ++i) {
+                RECT rcPart;
+                SendMessageW(hWnd, SB_GETRECT, i, reinterpret_cast<LPARAM>(&rcPart));
+                if (rcPart.right <= rcPart.left) continue;
+
+                wchar_t text[128] = { 0 };
+                SendMessageW(hWnd, SB_GETTEXTW, i, reinterpret_cast<LPARAM>(text));
+
+                RECT rcText = rcPart;
+                rcText.left += Pluma::Platform::ScaleForDpi(8, self->m_dpi);
+                rcText.right -= Pluma::Platform::ScaleForDpi(8, self->m_dpi);
+                DrawTextW(memDC, text, -1, &rcText, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+
+                if (i < partCount - 1 && rcPart.right < rcClient.right - 20) {
+                    int h = rcPart.bottom - rcPart.top;
+                    int sepTop = rcPart.top + h / 4;
+                    int sepBottom = rcPart.bottom - h / 4;
+                    RECT rcSep = { rcPart.right, sepTop, rcPart.right + 1, sepBottom };
+                    HBRUSH hbrSep = CreateSolidBrush(sepCol);
+                    FillRect(memDC, &rcSep, hbrSep);
+                    DeleteObject(hbrSep);
+                }
+            }
+
+            // Size grip dots
+            if (!IsZoomed(self->m_hwnd)) {
+                COLORREF dotCol = dark ? RGB(80, 80, 80) : RGB(180, 180, 180);
+                int gx = rcClient.right - Pluma::Platform::ScaleForDpi(16, self->m_dpi);
+                int gy = rcClient.bottom - Pluma::Platform::ScaleForDpi(16, self->m_dpi);
+                int dotSize = Pluma::Platform::ScaleForDpi(2, self->m_dpi);
+                int step = Pluma::Platform::ScaleForDpi(4, self->m_dpi);
+
+                HBRUSH hbrDot = CreateSolidBrush(dotCol);
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 2 - r; c < 3; ++c) {
+                        RECT rcDot{ gx + c * step, gy + r * step,
+                                    gx + c * step + dotSize, gy + r * step + dotSize };
+                        FillRect(memDC, &rcDot, hbrDot);
+                    }
+                }
+                DeleteObject(hbrDot);
+            }
+
+            SelectObject(memDC, oldFont);
+            DeleteObject(hFont);
+
+            BitBlt(hdc, 0, 0, rcClient.right, rcClient.bottom, memDC, 0, 0, SRCCOPY);
+            SelectObject(memDC, oldBmp);
+            DeleteObject(memBmp);
+            DeleteDC(memDC);
+
+            EndPaint(hWnd, &ps);
+            return 0;
+        }
+
+        case WM_NCDESTROY:
+            RemoveWindowSubclass(hWnd, StatusBarSubclassProc, uIdSubclass);
+            break;
+        }
+
+        return DefSubclassProc(hWnd, uMsg, wParam, lParam);
     }
 
     HWND m_hwnd = nullptr;
@@ -1096,6 +1403,9 @@ private:
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPWSTR /*lpCmdLine*/, int nShowCmd) {
+    // Initialize dark mode support for the process before creating any windows
+    Pluma::Platform::InitializeDarkMode();
+
     // Initialize COM for modern IFileDialog and Direct2D/DirectWrite
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 

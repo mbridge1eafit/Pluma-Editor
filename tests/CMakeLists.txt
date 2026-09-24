@@ -64,6 +64,7 @@ target_link_libraries(unit_tests PRIVATE
     scintilla
     lexilla
     dwmapi
+    uxtheme
     d2d1
     dwrite
     user32

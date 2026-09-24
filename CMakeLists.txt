@@ -96,6 +96,7 @@ target_link_libraries(pluma PRIVATE
     user32
     gdi32
     comctl32
+    uxtheme
     d2d1
     dwrite
     windowscodecs

@@ -29,6 +29,9 @@
 #define IDM_VIEW_SPLIT                  40032
 #define IDM_VIEW_PREVIEW_ONLY           40033
 #define IDM_VIEW_OUTLINE                40034
+#define IDM_VIEW_THEME_SYSTEM           40061
+#define IDM_VIEW_THEME_DARK             40062
+#define IDM_VIEW_THEME_LIGHT            40063
 
 #define IDM_FORMAT_BOLD                 40051
 #define IDM_FORMAT_ITALIC               40052
