@@ -10,8 +10,8 @@ IDI_DOC_MD      ICON    "icons/doc_md.ico"
 
 // Version Information
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     0,1,0,0
-PRODUCTVERSION  0,1,0,0
+FILEVERSION     0,2,0,0
+PRODUCTVERSION  0,2,0,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
 FILEFLAGS       VS_FF_DEBUG
@@ -28,11 +28,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Mauricio Bridge"
             VALUE "FileDescription",  "Pluma - Editor Markdown nativo para Windows"
-            VALUE "FileVersion",      "0.1.0.0"
+            VALUE "FileVersion",      "0.2.0.0"
             VALUE "InternalName",     "pluma"
             VALUE "OriginalFilename", "pluma.exe"
             VALUE "ProductName",      "Pluma"
-            VALUE "ProductVersion",   "0.1.0.0"
+            VALUE "ProductVersion",   "0.2.0.0"
         END
     END
     BLOCK "VarFileInfo"
