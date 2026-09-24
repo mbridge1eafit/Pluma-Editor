@@ -482,29 +482,33 @@ void PreviewView::UpdateScrollbars() {
     SetScrollInfo(m_hwnd, SB_VERT, &si, TRUE);
 }
 
-void PreviewView::ScrollTo(int newPos) {
+void PreviewView::ScrollTo(int newPos, bool notify) {
     newPos = (std::clamp)(newPos, 0, m_maxScroll);
     if (newPos != m_scrollPos) {
         m_scrollPos = newPos;
         SetScrollPos(m_hwnd, SB_VERT, m_scrollPos, TRUE);
         InvalidateRect(m_hwnd, nullptr, FALSE);
+        if (notify && m_onScrollCallback) {
+            int line = GetLineForCurrentScroll();
+            m_onScrollCallback(line);
+        }
     }
+}
+
+int PreviewView::GetLineForCurrentScroll() const {
+    return m_layout.GetLineForScrollY(static_cast<float>(m_scrollPos));
 }
 
 void PreviewView::ScrollToAnchor(std::string_view slug) {
     float y = m_layout.GetAnchorY(slug);
     if (y >= 0.0f) {
-        ScrollTo(static_cast<int>(y - 16.0f));
+        ScrollTo(static_cast<int>(y - 16.0f), true);
     }
 }
 
 void PreviewView::ScrollToLine(int line) {
-    for (const auto& block : m_layout.GetBlocks()) {
-        if (block.startLine <= line && block.endLine >= line) {
-            ScrollTo(static_cast<int>(block.bounds.top - 20.0f));
-            break;
-        }
-    }
+    float y = m_layout.GetScrollYForLine(line);
+    ScrollTo(static_cast<int>(y), false);
 }
 
 } // namespace Pluma::Preview

@@ -19,6 +19,9 @@ set(UNIT_TEST_SOURCES
     unit/test_editor_view.cpp
     unit/test_markdown_parser.cpp
     unit/test_preview_layout.cpp
+    unit/test_sync_scroll.cpp
+    unit/test_html_exporter.cpp
+    unit/test_pdf_exporter.cpp
     ../src/platform/dpi.cpp
     ../src/platform/dpi.h
     ../src/platform/theme.cpp
@@ -35,6 +38,14 @@ set(UNIT_TEST_SOURCES
     ../src/markdown/parse_worker.h
     ../src/preview/preview_layout.cpp
     ../src/preview/preview_layout.h
+    ../src/preview/preview_view.cpp
+    ../src/preview/preview_view.h
+    ../src/sync/sync_scroll.cpp
+    ../src/sync/sync_scroll.h
+    ../src/export/html_exporter.cpp
+    ../src/export/html_exporter.h
+    ../src/export/pdf_exporter.cpp
+    ../src/export/pdf_exporter.h
 )
 
 add_executable(unit_tests ${UNIT_TEST_SOURCES})

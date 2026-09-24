@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <functional>
 
 #include "preview_layout.h"
 #include "../markdown/block_tree.h"
@@ -38,6 +39,12 @@ public:
 
     void ScrollToAnchor(std::string_view slug);
     void ScrollToLine(int line); // For F-14 sync scroll
+    int GetScrollPos() const noexcept { return m_scrollPos; }
+    int GetLineForCurrentScroll() const;
+
+    void SetOnScrollCallback(std::function<void(int line)> callback) {
+        m_onScrollCallback = std::move(callback);
+    }
 
     void OnResize(int width, int height);
 
@@ -49,7 +56,7 @@ private:
     void DiscardDirect2DResources();
     void Render();
     void UpdateScrollbars();
-    void ScrollTo(int newPos);
+    void ScrollTo(int newPos, bool notify = true);
 
     HWND m_hwnd = nullptr;
     HWND m_hParent = nullptr;
@@ -86,6 +93,7 @@ private:
     std::string m_hoverUrl;
     HCURSOR m_hHandCursor = nullptr;
     HCURSOR m_hArrowCursor = nullptr;
+    std::function<void(int line)> m_onScrollCallback;
 };
 
 } // namespace Pluma::Preview

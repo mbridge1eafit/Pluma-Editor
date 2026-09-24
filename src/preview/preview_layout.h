@@ -95,6 +95,10 @@ public:
     // Returns Y position for an anchor slug, or negative value if not found (F-10)
     float GetAnchorY(std::string_view slug) const;
 
+    // Line-to-coordinate and coordinate-to-line mapping for synchronized scroll (F-14)
+    float GetScrollYForLine(int docLine) const;
+    int GetLineForScrollY(float scrollY) const;
+
 private:
     void LayoutDocumentBlock(const Markdown::Block& block, float contentWidth, float& currentY);
     void LayoutHeading(const Markdown::Block& block, float contentWidth, float& currentY);

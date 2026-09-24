@@ -76,6 +76,8 @@ public:
 
     // Navigation and Search (F-04)
     void GotoLine(int line);
+    int GetFirstVisibleDocLine() const;
+    void ScrollToDocLine(int docLine);
     bool FindNext(std::string_view text, bool matchCase, bool wholeWord, bool regex);
     int ReplaceAll(std::string_view findText, std::string_view replaceText,
                    bool matchCase, bool wholeWord, bool regex);

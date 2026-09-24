@@ -649,4 +649,93 @@ float LayoutEngine::GetAnchorY(std::string_view slug) const {
     return -1.0f;
 }
 
+float LayoutEngine::GetScrollYForLine(int docLine) const {
+    if (m_blocks.empty() || docLine <= 0) {
+        return 0.0f;
+    }
+
+    std::vector<const LayoutBlock*> validBlocks;
+    validBlocks.reserve(m_blocks.size());
+    for (const auto& b : m_blocks) {
+        if (b.startLine > 0 && b.endLine >= b.startLine) {
+            validBlocks.push_back(&b);
+        }
+    }
+
+    if (validBlocks.empty()) {
+        return 0.0f;
+    }
+
+    if (docLine <= validBlocks.front()->startLine) {
+        return 0.0f;
+    }
+    if (docLine >= validBlocks.back()->endLine) {
+        return validBlocks.back()->bounds.top;
+    }
+
+    for (size_t i = 0; i < validBlocks.size(); ++i) {
+        const auto* b = validBlocks[i];
+        if (docLine >= b->startLine && docLine <= b->endLine) {
+            float lineSpan = static_cast<float>((std::max)(1, b->endLine - b->startLine));
+            float t = static_cast<float>(docLine - b->startLine) / lineSpan;
+            return b->bounds.top + t * (b->bounds.bottom - b->bounds.top);
+        }
+        if (i + 1 < validBlocks.size()) {
+            const auto* nextB = validBlocks[i + 1];
+            if (docLine > b->endLine && docLine < nextB->startLine) {
+                float lineGap = static_cast<float>(nextB->startLine - b->endLine);
+                float t = static_cast<float>(docLine - b->endLine) / lineGap;
+                return b->bounds.bottom + t * (nextB->bounds.top - b->bounds.bottom);
+            }
+        }
+    }
+
+    return m_totalHeight;
+}
+
+int LayoutEngine::GetLineForScrollY(float scrollY) const {
+    if (m_blocks.empty() || scrollY <= 0.0f) {
+        return 1;
+    }
+
+    std::vector<const LayoutBlock*> validBlocks;
+    validBlocks.reserve(m_blocks.size());
+    for (const auto& b : m_blocks) {
+        if (b.startLine > 0 && b.endLine >= b.startLine) {
+            validBlocks.push_back(&b);
+        }
+    }
+
+    if (validBlocks.empty()) {
+        return 1;
+    }
+
+    if (scrollY <= validBlocks.front()->bounds.top) {
+        return validBlocks.front()->startLine;
+    }
+    if (scrollY >= validBlocks.back()->bounds.bottom) {
+        return validBlocks.back()->endLine;
+    }
+
+    for (size_t i = 0; i < validBlocks.size(); ++i) {
+        const auto* b = validBlocks[i];
+        if (scrollY >= b->bounds.top && scrollY <= b->bounds.bottom) {
+            float h = (std::max)(1.0f, b->bounds.bottom - b->bounds.top);
+            float t = (scrollY - b->bounds.top) / h;
+            return b->startLine + static_cast<int>(t * (b->endLine - b->startLine));
+        }
+        if (i + 1 < validBlocks.size()) {
+            const auto* nextB = validBlocks[i + 1];
+            if (scrollY > b->bounds.bottom && scrollY < nextB->bounds.top) {
+                float gap = (std::max)(1.0f, nextB->bounds.top - b->bounds.bottom);
+                float t = (scrollY - b->bounds.bottom) / gap;
+                return b->endLine + static_cast<int>(t * (nextB->startLine - b->endLine));
+            }
+        }
+    }
+
+    return validBlocks.back()->endLine;
+}
+
+
 } // namespace Pluma::Preview

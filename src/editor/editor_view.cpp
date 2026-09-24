@@ -206,6 +206,22 @@ void EditorView::GotoLine(int line) {
     Call(SCI_ENSUREVISIBLE, line - 1);
 }
 
+int EditorView::GetFirstVisibleDocLine() const {
+    sptr_t visibleLine = Call(SCI_GETFIRSTVISIBLELINE, 0, 0);
+    sptr_t docLine = Call(SCI_DOCLINEFROMVISIBLE, visibleLine, 0);
+    return static_cast<int>(docLine) + 1; // 1-indexed
+}
+
+void EditorView::ScrollToDocLine(int docLine) {
+    int targetDoc = (std::max)(1, docLine) - 1; // to 0-indexed
+    sptr_t targetVisible = Call(SCI_VISIBLEFROMDOCLINE, targetDoc, 0);
+    sptr_t currentVisible = Call(SCI_GETFIRSTVISIBLELINE, 0, 0);
+    sptr_t delta = targetVisible - currentVisible;
+    if (delta != 0) {
+        Call(SCI_LINESCROLL, 0, delta);
+    }
+}
+
 bool EditorView::FindNext(std::string_view text, bool matchCase, bool wholeWord, bool regex) {
     if (text.empty()) {
         return false;

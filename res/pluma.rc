@@ -65,6 +65,12 @@ BEGIN
         MENUITEM "&Guardar\tCtrl+S",             IDM_FILE_SAVE
         MENUITEM "Guardar &como...\tCtrl+Shift+S", IDM_FILE_SAVEAS
         MENUITEM SEPARATOR
+        POPUP "&Exportar"
+        BEGIN
+            MENUITEM "Exportar a &HTML...",      IDM_FILE_EXPORT_HTML
+            MENUITEM "Exportar a &PDF...",       IDM_FILE_EXPORT_PDF
+        END
+        MENUITEM SEPARATOR
         MENUITEM "&Salir",                       IDM_FILE_EXIT
     END
     POPUP "&Edición"
@@ -103,4 +109,6 @@ BEGIN
     IDS_SAVE_CHANGES_PROMPT     "¿Desea guardar los cambios en %s?"
     IDS_FILTER_MARKDOWN         "Archivos Markdown (*.md;*.markdown;*.mdown)\0*.md;*.markdown;*.mdown\0"
     IDS_FILTER_ALL              "Todos los archivos (*.*)\0*.*\0"
+    IDS_FILTER_HTML             "Documento HTML (*.html;*.htm)\0*.html;*.htm\0"
+    IDS_FILTER_PDF              "Documento PDF (*.pdf)\0*.pdf\0"
 END
