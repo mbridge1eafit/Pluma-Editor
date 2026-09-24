@@ -1,11 +1,10 @@
 #include "file_association.h"
 
 #include <shellapi.h>
-#include <shlobj.h>  // SHOpenWithDialog, SHChangeNotify
+#include <shlobj.h>  // SHChangeNotify
 #include <shlwapi.h> // AssocQueryStringW
 
 #include <filesystem>
-#include <system_error>
 
 #include "../../res/resource.h"
 
@@ -117,35 +116,14 @@ bool IsDefaultMarkdownHandler(const std::wstring& exePath) {
                                 static_cast<int>(ours.size()), TRUE) == CSTR_EQUAL;
 }
 
-bool ShowDefaultAppPicker(HWND owner) {
-    // The picker needs a file of the right type; an empty one in %TEMP% is enough (it is not opened).
-    std::error_code ec;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path(ec) / L"Pluma";
-    std::filesystem::create_directories(dir, ec);
-    const std::filesystem::path sample = dir / L"Documento.md";
-    const HANDLE hFile = CreateFileW(sample.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                                     FILE_ATTRIBUTE_TEMPORARY, nullptr);
-    const bool haveSample = hFile != INVALID_HANDLE_VALUE;
-    if (haveSample) CloseHandle(hFile);
-
-    HRESULT hr = E_FAIL;
-    if (haveSample) {
-        OPENASINFO info{};
-        info.pcszFile = sample.c_str();
-        info.pcszClass = nullptr;
-        // "Always use this app" preselected; the choice is stored by Windows itself.
-        info.oaifInFlags = OAIF_REGISTER_EXT | OAIF_FORCE_REGISTRATION;
-        hr = SHOpenWithDialog(owner, &info);
-        DeleteFileW(sample.c_str());
-    }
-
-    if (SUCCEEDED(hr) || hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
-        return true;
-    }
-
-    // Fallback: the Default apps page of Settings.
-    const auto result = reinterpret_cast<INT_PTR>(
-        ShellExecuteW(owner, L"open", L"ms-settings:defaultapps", nullptr, nullptr, SW_SHOWNORMAL));
+bool OpenDefaultAppsSettings(HWND owner) {
+    // SHOpenWithDialog cannot do this since Windows 10: it ignores the registration flags and, without
+    // OAIF_EXEC, only shows a "go to Settings" notice. Settings is the supported path.
+    // Windows 11 (2023-04 update or later) opens Pluma's own page (per-user RegisteredApplications
+    // name); older builds, including Windows 10, ignore the query and open Default apps.
+    const std::wstring uri = std::wstring(L"ms-settings:defaultapps?registeredAppUser=") + kAppName;
+    const auto result =
+        reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", uri.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
     return result > 32;
 }
 

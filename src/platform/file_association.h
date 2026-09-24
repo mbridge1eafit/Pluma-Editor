@@ -23,8 +23,8 @@ bool RegisterMarkdownHandler(const std::wstring& exePath);
 bool IsDefaultMarkdownHandler(const std::wstring& exePath);
 
 // Windows protects the user's default-app choice: it can only be changed through the system UI.
-// Shows the "How do you want to open .md files?" picker (falling back to Settings > Default apps).
-// Returns false when no system UI could be shown.
-bool ShowDefaultAppPicker(HWND owner);
+// Opens Settings > Default apps (Pluma's own page on recent Windows 11). Non-blocking.
+// Returns false when Settings could not be launched.
+bool OpenDefaultAppsSettings(HWND owner);
 
 } // namespace Pluma::Platform
