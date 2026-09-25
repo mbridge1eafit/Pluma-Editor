@@ -31,6 +31,7 @@ set(UNIT_TEST_SOURCES
     ../src/outline/outline_panel.cpp
     ../src/outline/outline_panel.h
     ../src/platform/dpi.cpp
+    ../src/platform/icon_font.cpp
     ../src/platform/dpi.h
     ../src/platform/theme.cpp
     ../src/platform/theme.h

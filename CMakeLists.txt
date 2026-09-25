@@ -61,6 +61,8 @@ set(PLUMA_SOURCES
     src/platform/file_association.cpp
     src/platform/dpi.h
     src/platform/dpi.cpp
+    src/platform/icon_font.h
+    src/platform/icon_font.cpp
     src/platform/theme.h
     src/platform/theme.cpp
     src/io/document_io.h

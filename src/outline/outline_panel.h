@@ -77,6 +77,7 @@ private:
     bool m_dark = false;
     HFONT m_font = nullptr;
     HFONT m_captionFont = nullptr;
+    HFONT m_iconFont = nullptr;
     bool m_closeHot = false;
     bool m_closePressed = false;
     bool m_trackingMouse = false;
