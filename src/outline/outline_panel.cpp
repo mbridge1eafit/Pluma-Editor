@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "../platform/dpi.h"
+#include "../platform/icon_font.h"
 
 namespace Pluma::Outline {
 
@@ -69,6 +70,7 @@ int FindSectionIndex(const std::vector<Heading>& headings, int line) {
 OutlinePanel::~OutlinePanel() {
     if (m_font) DeleteObject(m_font);
     if (m_captionFont) DeleteObject(m_captionFont);
+    if (m_iconFont) DeleteObject(m_iconFont);
 }
 
 bool OutlinePanel::Create(HWND parent, HINSTANCE hInstance) {
@@ -231,6 +233,8 @@ void OutlinePanel::ApplyColors() {
 void OutlinePanel::UpdateFonts() {
     if (m_font) DeleteObject(m_font);
     if (m_captionFont) DeleteObject(m_captionFont);
+    if (m_iconFont) DeleteObject(m_iconFont);
+    m_iconFont = Platform::CreateIconFont(Platform::ScaleForDpi(12, m_dpi));
     m_font = CreateFontW(-MulDiv(9, static_cast<int>(m_dpi), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                          DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -279,23 +283,22 @@ void OutlinePanel::Paint(HDC hdc) {
     RECT textRc{Platform::ScaleForDpi(12, m_dpi), 0, closeRc.left - Platform::ScaleForDpi(4, m_dpi), captionH};
     DrawTextW(memDC, L"ENCABEZADOS", -1, &textRc, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
 
-    // Close button: flat square with an X, highlighted on hover.
+    // Close button: system icon-font glyph on a rounded hover highlight.
     if (m_closeHot || m_closePressed) {
-        HBRUSH hot = CreateSolidBrush(m_closePressed ? p.buttonPressed : p.buttonHot);
-        FillRect(memDC, &closeRc, hot);
-        DeleteObject(hot);
+        const COLORREF fill = m_closePressed ? p.buttonPressed : p.buttonHot;
+        HBRUSH brush = CreateSolidBrush(fill);
+        HPEN pen = CreatePen(PS_SOLID, 1, fill);
+        HGDIOBJ oldBrush = SelectObject(memDC, brush);
+        HGDIOBJ oldPen = SelectObject(memDC, pen);
+        const int radius = Platform::ScaleForDpi(6, m_dpi);
+        RoundRect(memDC, closeRc.left, closeRc.top, closeRc.right, closeRc.bottom, radius, radius);
+        SelectObject(memDC, oldPen);
+        SelectObject(memDC, oldBrush);
+        DeleteObject(pen);
+        DeleteObject(brush);
     }
-    const int cx = (closeRc.left + closeRc.right) / 2;
-    const int cy = (closeRc.top + closeRc.bottom) / 2;
-    const int arm = Platform::ScaleForDpi(4, m_dpi);
-    HPEN pen = CreatePen(PS_SOLID, (std::max)(1, Platform::ScaleForDpi(1, m_dpi)), p.text);
-    HGDIOBJ oldPen = SelectObject(memDC, pen);
-    MoveToEx(memDC, cx - arm, cy - arm, nullptr);
-    LineTo(memDC, cx + arm + 1, cy + arm + 1);
-    MoveToEx(memDC, cx + arm, cy - arm, nullptr);
-    LineTo(memDC, cx - arm - 1, cy + arm + 1);
-    SelectObject(memDC, oldPen);
-    DeleteObject(pen);
+    SelectObject(memDC, m_iconFont);
+    Platform::DrawGlyph(memDC, Platform::Glyph::kClose, closeRc, p.text);
 
     SelectObject(memDC, oldFont);
     BitBlt(hdc, 0, 0, caption.right, caption.bottom, memDC, 0, 0, SRCCOPY);

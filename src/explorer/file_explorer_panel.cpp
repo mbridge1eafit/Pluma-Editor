@@ -8,6 +8,7 @@
 #include <cwctype>
 
 #include "../platform/dpi.h"
+#include "../platform/icon_font.h"
 
 namespace Pluma::Explorer {
 
@@ -53,6 +54,7 @@ bool SameFile(const std::filesystem::path& a, const std::filesystem::path& b) {
 FileExplorerPanel::~FileExplorerPanel() {
     if (m_font) DeleteObject(m_font);
     if (m_captionFont) DeleteObject(m_captionFont);
+    if (m_iconFont) DeleteObject(m_iconFont);
 }
 
 bool FileExplorerPanel::Create(HWND parent, HINSTANCE hInstance) {
@@ -216,6 +218,8 @@ void FileExplorerPanel::ApplyColors() {
 void FileExplorerPanel::UpdateFonts() {
     if (m_font) DeleteObject(m_font);
     if (m_captionFont) DeleteObject(m_captionFont);
+    if (m_iconFont) DeleteObject(m_iconFont);
+    m_iconFont = Platform::CreateIconFont(Platform::ScaleForDpi(12, m_dpi));
     m_font = CreateFontW(-MulDiv(9, static_cast<int>(m_dpi), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                          DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -271,47 +275,27 @@ void FileExplorerPanel::Paint(HDC hdc) {
     RECT textRc{Platform::ScaleForDpi(12, m_dpi), 0, refreshRc.left - Platform::ScaleForDpi(4, m_dpi), captionH};
     DrawTextW(memDC, L"ARCHIVOS", -1, &textRc, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
 
-    // Refresh button: circular-arrow glyph approximated with an open arc and an arrowhead.
-    if (m_refreshHot || m_refreshPressed) {
-        HBRUSH hot = CreateSolidBrush(m_refreshPressed ? p.buttonPressed : p.buttonHot);
-        FillRect(memDC, &refreshRc, hot);
-        DeleteObject(hot);
-    }
-    {
-        const int cx = (refreshRc.left + refreshRc.right) / 2;
-        const int cy = (refreshRc.top + refreshRc.bottom) / 2;
-        const int r = Platform::ScaleForDpi(5, m_dpi);
-        HPEN pen = CreatePen(PS_SOLID, (std::max)(1, Platform::ScaleForDpi(1, m_dpi)), p.text);
-        HGDIOBJ oldPen = SelectObject(memDC, pen);
-        HGDIOBJ oldBrush = SelectObject(memDC, GetStockObject(NULL_BRUSH));
-        Arc(memDC, cx - r, cy - r, cx + r + 1, cy + r + 1, cx, cy - r, cx + r, cy);
-        POINT arrow[3] = {{cx + r - Platform::ScaleForDpi(3, m_dpi), cy - r - Platform::ScaleForDpi(2, m_dpi)},
-                          {cx + r + Platform::ScaleForDpi(3, m_dpi), cy - r},
-                          {cx + r - Platform::ScaleForDpi(1, m_dpi), cy - r + Platform::ScaleForDpi(3, m_dpi)}};
-        Polyline(memDC, arrow, 3);
-        SelectObject(memDC, oldBrush);
-        SelectObject(memDC, oldPen);
-        DeleteObject(pen);
-    }
-
-    // Close button: flat square with an X, highlighted on hover.
+    // Refresh and close buttons: system icon-font glyphs on a rounded hover highlight.
     const RECT closeRc = CloseButtonRect();
-    if (m_closeHot || m_closePressed) {
-        HBRUSH hot = CreateSolidBrush(m_closePressed ? p.buttonPressed : p.buttonHot);
-        FillRect(memDC, &closeRc, hot);
-        DeleteObject(hot);
-    }
-    const int cx = (closeRc.left + closeRc.right) / 2;
-    const int cy = (closeRc.top + closeRc.bottom) / 2;
-    const int arm = Platform::ScaleForDpi(4, m_dpi);
-    HPEN pen = CreatePen(PS_SOLID, (std::max)(1, Platform::ScaleForDpi(1, m_dpi)), p.text);
-    HGDIOBJ oldPen = SelectObject(memDC, pen);
-    MoveToEx(memDC, cx - arm, cy - arm, nullptr);
-    LineTo(memDC, cx + arm + 1, cy + arm + 1);
-    MoveToEx(memDC, cx + arm, cy - arm, nullptr);
-    LineTo(memDC, cx - arm - 1, cy + arm + 1);
-    SelectObject(memDC, oldPen);
-    DeleteObject(pen);
+    const auto drawButton = [&](const RECT& rc, const wchar_t* glyph, bool hot, bool pressed) {
+        if (hot || pressed) {
+            const COLORREF fill = pressed ? p.buttonPressed : p.buttonHot;
+            HBRUSH brush = CreateSolidBrush(fill);
+            HPEN pen = CreatePen(PS_SOLID, 1, fill);
+            HGDIOBJ oldBrush = SelectObject(memDC, brush);
+            HGDIOBJ oldPen = SelectObject(memDC, pen);
+            const int radius = Platform::ScaleForDpi(6, m_dpi);
+            RoundRect(memDC, rc.left, rc.top, rc.right, rc.bottom, radius, radius);
+            SelectObject(memDC, oldPen);
+            SelectObject(memDC, oldBrush);
+            DeleteObject(pen);
+            DeleteObject(brush);
+        }
+        SelectObject(memDC, m_iconFont);
+        Platform::DrawGlyph(memDC, glyph, rc, p.text);
+    };
+    drawButton(refreshRc, Platform::Glyph::kRefresh, m_refreshHot, m_refreshPressed);
+    drawButton(closeRc, Platform::Glyph::kClose, m_closeHot, m_closePressed);
 
     SelectObject(memDC, oldFont);
     BitBlt(hdc, 0, 0, caption.right, caption.bottom, memDC, 0, 0, SRCCOPY);
