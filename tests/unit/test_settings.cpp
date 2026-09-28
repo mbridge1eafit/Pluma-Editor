@@ -36,6 +36,7 @@ TEST(SettingsTest, RoundTripPreservesEveryValue) {
     s.lastView = ViewLayout::EditorOnly;
     s.showOutline = true;
     s.showStatusBar = false;
+    s.showFormatBar = false;
     s.syncScroll = false;
     s.outlineWidth = 300;
     s.splitRatio = 0.625f;
@@ -70,6 +71,7 @@ TEST(SettingsTest, RoundTripPreservesEveryValue) {
     EXPECT_EQ(r.lastView, s.lastView);
     EXPECT_EQ(r.showOutline, s.showOutline);
     EXPECT_EQ(r.showStatusBar, s.showStatusBar);
+    EXPECT_EQ(r.showFormatBar, s.showFormatBar);
     EXPECT_EQ(r.syncScroll, s.syncScroll);
     EXPECT_EQ(r.outlineWidth, s.outlineWidth);
     EXPECT_FLOAT_EQ(r.splitRatio, s.splitRatio);

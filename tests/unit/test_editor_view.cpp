@@ -316,3 +316,111 @@ TEST_F(EditorViewTest, SelectionMatchesIgnoresCaseOnRequest) {
     EXPECT_FALSE(editor.SelectionMatches("árbol", true));
     EXPECT_FALSE(editor.SelectionMatches("verde", false));
 }
+
+TEST_F(EditorViewTest, ListToggleKeepsCaretOnTheText) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1014, 0, 0, 800, 600));
+
+    editor.SetText("hola");
+    editor.Call(SCI_SETSEL, 2, 2);
+    editor.ToggleBulletList();
+    EXPECT_EQ(editor.GetText(), "- hola");
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), 4);
+    EXPECT_TRUE(editor.GetCaretLineState().bullet);
+
+    editor.ToggleBulletList();
+    EXPECT_EQ(editor.GetText(), "hola");
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), 2);
+
+    editor.Undo();
+    EXPECT_EQ(editor.GetText(), "- hola"); // One undo step per toggle
+}
+
+TEST_F(EditorViewTest, BlockFormattingCoversSelectedLinesAndKeepsLineEndings) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1015, 0, 0, 800, 600));
+
+    editor.SetText("uno\r\ndos\ntres\r\ncuatro");
+    // From the middle of line 1 to the start of line 3: line 3 is not included.
+    editor.Call(SCI_SETSEL, 1, 15);
+    editor.ToggleNumberedList();
+    EXPECT_EQ(editor.GetText(), "1. uno\r\n2. dos\n3. tres\r\ncuatro");
+
+    editor.Call(SCI_SETSEL, 0, 0);
+    editor.SetHeading(2);
+    EXPECT_EQ(editor.GetText(), "## 1. uno\r\n2. dos\n3. tres\r\ncuatro");
+    EXPECT_EQ(editor.GetCaretLineState().headingLevel, 2);
+}
+
+TEST_F(EditorViewTest, InsertedBlocksAreSeparatedByBlankLines) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1016, 0, 0, 800, 600));
+    editor.SetEolMode(SC_EOL_LF);
+
+    // Right below a paragraph, "---" would turn it into a heading.
+    editor.SetText("Párrafo\nsiguiente");
+    editor.Call(SCI_SETSEL, 3, 3);
+    editor.InsertHorizontalRule();
+    EXPECT_EQ(editor.GetText(), "Párrafo\n\n---\n\nsiguiente");
+
+    editor.SetText("");
+    editor.InsertTable();
+    EXPECT_EQ(editor.GetText(),
+              "| Columna 1 | Columna 2 | Columna 3 |\n"
+              "| --------- | --------- | --------- |\n"
+              "|           |           |           |");
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONSTART), 2);
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONEND), 11);
+
+    // A blank caret line is replaced by the block.
+    editor.SetText("a\n\nb");
+    editor.Call(SCI_SETSEL, 2, 2);
+    editor.InsertCodeBlock();
+    EXPECT_EQ(editor.GetText(), "a\n\n```\n\n```\n\nb");
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), 7); // Inside the fence
+}
+
+TEST_F(EditorViewTest, CodeBlockWrapsLinesAndTogglesOff) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1017, 0, 0, 800, 600));
+    editor.SetEolMode(SC_EOL_LF);
+
+    editor.SetText("x = 1\ny = 2");
+    editor.Call(SCI_SETSEL, 2, 8);
+    editor.InsertCodeBlock();
+    EXPECT_EQ(editor.GetText(), "```\nx = 1\ny = 2\n```");
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), 3); // After the fence, to type the language
+
+    editor.Call(SCI_SETSEL, 4, 15);
+    editor.InsertCodeBlock();
+    EXPECT_EQ(editor.GetText(), "x = 1\ny = 2");
+}
+
+TEST_F(EditorViewTest, InsertImageAndDiagram) {
+    ASSERT_NE(m_parentHwnd, nullptr);
+
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1018, 0, 0, 800, 600));
+    editor.SetEolMode(SC_EOL_LF);
+
+    editor.SetText("logo");
+    editor.Call(SCI_SETSEL, 0, 4);
+    editor.InsertImage();
+    EXPECT_EQ(editor.GetText(), "![logo](url)");
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONSTART), 8); // "url" selected
+    EXPECT_EQ(editor.Call(SCI_GETSELECTIONEND), 11);
+
+    editor.SetText("");
+    editor.InsertDiagram(Pluma::Editor::MarkdownFormat::DiagramKind::Pie);
+    const std::string text = editor.GetText();
+    EXPECT_TRUE(text.starts_with("```mermaid\npie"));
+    EXPECT_TRUE(text.ends_with("\n```"));
+}

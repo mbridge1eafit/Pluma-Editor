@@ -64,6 +64,7 @@ struct Settings {
     bool showExplorer = false;
     bool showStatusBar = true;
     bool showToolbar = true;
+    bool showFormatBar = true;        // Markdown format bar above the editor
     bool syncScroll = true;
     int outlineWidth = 240;           // Logical pixels
     int explorerWidth = 240;          // Logical pixels

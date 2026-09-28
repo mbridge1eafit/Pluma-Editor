@@ -520,6 +520,7 @@ public:
 
     struct Layout {
         RECT toolbar{};         // Empty when the toolbar is hidden
+        RECT formatBar{};       // Above the editor; empty when hidden or in "preview only"
         RECT explorer{};        // Empty when the file explorer panel is hidden
         RECT explorerDivider{};
         RECT outline{};         // Empty when the headings panel is hidden
@@ -593,6 +594,12 @@ public:
             break;
         }
         }
+        if (m_settings.showFormatBar && m_formatBar.GetHwnd() && !IsRectEmpty(&layout.editor)) {
+            // The format bar belongs to the editor pane: the preview keeps the full height.
+            const int barH = (std::min)(m_formatBar.GetHeight(), static_cast<int>(layout.editor.bottom - layout.editor.top) / 2);
+            layout.formatBar = RECT{layout.editor.left, layout.editor.top, layout.editor.right, layout.editor.top + barH};
+            layout.editor.top += barH;
+        }
         return layout;
     }
 
@@ -635,6 +642,7 @@ public:
             }
             m_toolbar.UpdateState(m_viewMode, m_settings.showOutline, m_settings.showExplorer);
         }
+        if (m_formatBar.GetHwnd()) PlaceWindow(m_formatBar.GetHwnd(), layout.formatBar);
         if (m_explorer.GetHwnd()) PlaceWindow(m_explorer.GetHwnd(), layout.explorer);
         if (m_outline.GetHwnd()) PlaceWindow(m_outline.GetHwnd(), layout.outline);
         PlaceWindow(m_editor.GetHwnd(), layout.editor);
@@ -652,11 +660,34 @@ public:
                           MF_BYCOMMAND | (m_settings.showExplorer ? MF_CHECKED : MF_UNCHECKED));
             CheckMenuItem(hMenu, IDM_VIEW_TOOLBAR,
                           MF_BYCOMMAND | (m_settings.showToolbar ? MF_CHECKED : MF_UNCHECKED));
+            CheckMenuItem(hMenu, IDM_VIEW_FORMATBAR,
+                          MF_BYCOMMAND | (m_settings.showFormatBar ? MF_CHECKED : MF_UNCHECKED));
             CheckMenuItem(hMenu, IDM_VIEW_STATUSBAR,
                           MF_BYCOMMAND | (m_settings.showStatusBar ? MF_CHECKED : MF_UNCHECKED));
         }
 
+        UpdateFormatBarState();
         InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+
+    // Highlights the heading level, list and quote buttons that apply to the caret line.
+    void UpdateFormatBarState() {
+        if (!m_formatBar.GetHwnd() || !m_settings.showFormatBar || m_viewMode == ViewMode::PreviewOnly) return;
+        const auto state = m_editor.GetCaretLineState();
+        m_formatBar.SetChecked(IDM_FORMAT_HEADING_0 + static_cast<UINT>(state.headingLevel), state.headingLevel > 0);
+        m_formatBar.SetChecked(IDM_FORMAT_QUOTE, state.quote);
+        m_formatBar.SetChecked(IDM_FORMAT_BULLET_LIST, state.bullet);
+        m_formatBar.SetChecked(IDM_FORMAT_NUMBERED_LIST, state.numbered);
+        m_formatBar.SetChecked(IDM_FORMAT_TASK_LIST, state.task);
+    }
+
+    // Formatting edits the editor, so it only applies while the editor is visible; the keyboard
+    // goes back to it (the command may come from the format bar or a menu).
+    template <typename Edit>
+    void ApplyFormat(Edit&& edit) {
+        if (m_viewMode == ViewMode::PreviewOnly) return;
+        edit();
+        m_editor.SetFocus();
     }
 
     void UpdateStatusBarParts() {
@@ -1114,6 +1145,8 @@ private:
 
             m_toolbar.Create(m_hwnd, m_hInstance);
             m_toolbar.ApplyTheme(darkMode);
+            m_formatBar.Create(m_hwnd, m_hInstance, Pluma::App::Toolbar::Style::Format);
+            m_formatBar.ApplyTheme(darkMode);
 
             m_editor.Create(m_hwnd, m_hInstance, kEditorControlId, 0, 0, width / 2, height);
             ApplyEditorSettings();
@@ -1205,6 +1238,9 @@ private:
                     UpdateStatusBar();
                     if (m_settings.showOutline && (scn->updated & (SC_UPDATE_SELECTION | SC_UPDATE_CONTENT))) {
                         m_outline.HighlightLine(m_editor.GetCursorPosition().line);
+                    }
+                    if (scn->updated & (SC_UPDATE_SELECTION | SC_UPDATE_CONTENT)) {
+                        UpdateFormatBarState();
                     }
                     if (scn->updated & SC_UPDATE_V_SCROLL) {
                         if (m_syncScroll && m_viewMode == ViewMode::Split) {
@@ -1366,6 +1402,7 @@ private:
             m_outline.SetDpi(m_dpi);
             m_explorer.SetDpi(m_dpi);
             m_toolbar.SetDpi(m_dpi);
+            m_formatBar.SetDpi(m_dpi);
             m_statusFont.reset();
             UpdateStatusBarParts();
             auto* const prcNewWindow = reinterpret_cast<RECT*>(lParam);
@@ -1450,19 +1487,64 @@ private:
                 return 0;
 
             case IDM_FORMAT_BOLD:
-                m_editor.InsertBold();
+                ApplyFormat([this] { m_editor.InsertBold(); });
                 return 0;
             case IDM_FORMAT_ITALIC:
-                m_editor.InsertItalic();
+                ApplyFormat([this] { m_editor.InsertItalic(); });
                 return 0;
             case IDM_FORMAT_CODE:
-                m_editor.InsertCode();
+                ApplyFormat([this] { m_editor.InsertCode(); });
                 return 0;
             case IDM_FORMAT_STRIKE:
-                m_editor.InsertStrikethrough();
+                ApplyFormat([this] { m_editor.InsertStrikethrough(); });
                 return 0;
             case IDM_FORMAT_LINK:
-                m_editor.InsertLink();
+                ApplyFormat([this] { m_editor.InsertLink(); });
+                return 0;
+            case IDM_FORMAT_IMAGE:
+                ApplyFormat([this] { m_editor.InsertImage(); });
+                return 0;
+            case IDM_FORMAT_QUOTE:
+                ApplyFormat([this] { m_editor.ToggleQuote(); });
+                return 0;
+            case IDM_FORMAT_BULLET_LIST:
+                ApplyFormat([this] { m_editor.ToggleBulletList(); });
+                return 0;
+            case IDM_FORMAT_NUMBERED_LIST:
+                ApplyFormat([this] { m_editor.ToggleNumberedList(); });
+                return 0;
+            case IDM_FORMAT_TASK_LIST:
+                ApplyFormat([this] { m_editor.ToggleTaskList(); });
+                return 0;
+            case IDM_FORMAT_CODE_BLOCK:
+                ApplyFormat([this] { m_editor.InsertCodeBlock(); });
+                return 0;
+            case IDM_FORMAT_TABLE:
+                ApplyFormat([this] { m_editor.InsertTable(); });
+                return 0;
+            case IDM_FORMAT_HRULE:
+                ApplyFormat([this] { m_editor.InsertHorizontalRule(); });
+                return 0;
+            case IDM_FORMAT_HEADING_0:
+            case IDM_FORMAT_HEADING_1:
+            case IDM_FORMAT_HEADING_2:
+            case IDM_FORMAT_HEADING_3:
+            case IDM_FORMAT_HEADING_4:
+            case IDM_FORMAT_HEADING_5:
+            case IDM_FORMAT_HEADING_6:
+                ApplyFormat([this, wmId] { m_editor.SetHeading(wmId - IDM_FORMAT_HEADING_0); });
+                return 0;
+            case IDM_FORMAT_DIAGRAM_FLOWCHART:
+                ApplyFormat([this] { m_editor.InsertDiagram(Pluma::Editor::MarkdownFormat::DiagramKind::Flowchart); });
+                return 0;
+            case IDM_FORMAT_DIAGRAM_SEQUENCE:
+                ApplyFormat([this] { m_editor.InsertDiagram(Pluma::Editor::MarkdownFormat::DiagramKind::Sequence); });
+                return 0;
+            case IDM_FORMAT_DIAGRAM_STATE:
+                ApplyFormat([this] { m_editor.InsertDiagram(Pluma::Editor::MarkdownFormat::DiagramKind::State); });
+                return 0;
+            case IDM_FORMAT_DIAGRAM_PIE:
+                ApplyFormat([this] { m_editor.InsertDiagram(Pluma::Editor::MarkdownFormat::DiagramKind::Pie); });
                 return 0;
 
             case IDM_VIEW_EDITOR_ONLY:
@@ -1487,6 +1569,9 @@ private:
                 return 0;
             case IDM_VIEW_TOOLBAR:
                 SetToolbarVisible(!m_settings.showToolbar);
+                return 0;
+            case IDM_VIEW_FORMATBAR:
+                SetFormatBarVisible(!m_settings.showFormatBar);
                 return 0;
             case IDM_VIEW_STATUSBAR:
                 SetStatusBarVisible(!m_settings.showStatusBar);
@@ -1581,6 +1666,7 @@ private:
         m_outline.SetDarkMode(darkMode);
         m_explorer.SetDarkMode(darkMode);
         m_toolbar.ApplyTheme(darkMode);
+        m_formatBar.ApplyTheme(darkMode);
 
         UpdateThemeMenuRadio();
         Pluma::Platform::RefreshWindowFrame(m_hwnd);
@@ -1650,6 +1736,11 @@ private:
 
     void SetToolbarVisible(bool visible) {
         m_settings.showToolbar = visible;
+        RelayoutChildren();
+    }
+
+    void SetFormatBarVisible(bool visible) {
+        m_settings.showFormatBar = visible;
         RelayoutChildren();
     }
 
@@ -2051,6 +2142,7 @@ private:
     Pluma::Outline::OutlinePanel m_outline;
     Pluma::Explorer::FileExplorerPanel m_explorer;
     Pluma::App::Toolbar m_toolbar;
+    Pluma::App::Toolbar m_formatBar;
     std::vector<Pluma::Outline::Heading> m_headings; // From the last applied parse
     UINT m_dpi = 96;
     HCURSOR m_hSizeWeCursor = nullptr;

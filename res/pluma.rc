@@ -63,6 +63,12 @@ BEGIN
     "K",            IDM_FORMAT_LINK,        VIRTKEY, CONTROL
     "C",            IDM_FORMAT_CODE,        VIRTKEY, CONTROL, SHIFT
     "X",            IDM_FORMAT_STRIKE,      VIRTKEY, CONTROL, SHIFT
+    "I",            IDM_FORMAT_IMAGE,       VIRTKEY, CONTROL, SHIFT
+    "K",            IDM_FORMAT_CODE_BLOCK,  VIRTKEY, CONTROL, SHIFT
+    "Q",            IDM_FORMAT_QUOTE,       VIRTKEY, CONTROL, SHIFT
+    "7",            IDM_FORMAT_NUMBERED_LIST, VIRTKEY, CONTROL, SHIFT
+    "8",            IDM_FORMAT_BULLET_LIST, VIRTKEY, CONTROL, SHIFT
+    "9",            IDM_FORMAT_TASK_LIST,   VIRTKEY, CONTROL, SHIFT
     "O",            IDM_VIEW_OUTLINE,       VIRTKEY, CONTROL, SHIFT
     "E",            IDM_VIEW_OUTLINE_PANEL, VIRTKEY, CONTROL, SHIFT
     "F",            IDM_VIEW_EXPLORER_PANEL, VIRTKEY, CONTROL, SHIFT
@@ -109,6 +115,33 @@ BEGIN
             MENUITEM "&Código\tCtrl+Shift+C",    IDM_FORMAT_CODE
             MENUITEM "&Tachado\tCtrl+Shift+X",   IDM_FORMAT_STRIKE
             MENUITEM "&Enlace...\tCtrl+K",       IDM_FORMAT_LINK
+            MENUITEM "&Imagen\tCtrl+Shift+I",    IDM_FORMAT_IMAGE
+            MENUITEM SEPARATOR
+            POPUP "E&ncabezado"
+            BEGIN
+                MENUITEM "&Párrafo",             IDM_FORMAT_HEADING_0
+                MENUITEM "Encabezado &1",        IDM_FORMAT_HEADING_1
+                MENUITEM "Encabezado &2",        IDM_FORMAT_HEADING_2
+                MENUITEM "Encabezado &3",        IDM_FORMAT_HEADING_3
+                MENUITEM "Encabezado &4",        IDM_FORMAT_HEADING_4
+                MENUITEM "Encabezado &5",        IDM_FORMAT_HEADING_5
+                MENUITEM "Encabezado &6",        IDM_FORMAT_HEADING_6
+            END
+            MENUITEM "Lista con &viñetas\tCtrl+Shift+8", IDM_FORMAT_BULLET_LIST
+            MENUITEM "Lista n&umerada\tCtrl+Shift+7", IDM_FORMAT_NUMBERED_LIST
+            MENUITEM "Lista de t&areas\tCtrl+Shift+9", IDM_FORMAT_TASK_LIST
+            MENUITEM "Ci&ta\tCtrl+Shift+Q",      IDM_FORMAT_QUOTE
+            MENUITEM SEPARATOR
+            MENUITEM "&Bloque de código\tCtrl+Shift+K", IDM_FORMAT_CODE_BLOCK
+            MENUITEM "Ta&bla",                   IDM_FORMAT_TABLE
+            MENUITEM "&Línea horizontal",        IDM_FORMAT_HRULE
+            POPUP "&Diagrama Mermaid"
+            BEGIN
+                MENUITEM "Diagrama de &flujo",   IDM_FORMAT_DIAGRAM_FLOWCHART
+                MENUITEM "Diagrama de &secuencia", IDM_FORMAT_DIAGRAM_SEQUENCE
+                MENUITEM "Diagrama de &estados", IDM_FORMAT_DIAGRAM_STATE
+                MENUITEM "Gráfico &circular",    IDM_FORMAT_DIAGRAM_PIE
+            END
         END
         MENUITEM SEPARATOR
         MENUITEM "A&juste de línea\tAlt+Z",      IDM_EDIT_WRAP
@@ -129,6 +162,7 @@ BEGIN
         MENUITEM "&Panel de encabezados\tCtrl+Shift+E", IDM_VIEW_OUTLINE_PANEL
         MENUITEM "&Explorador de archivos\tCtrl+Shift+F", IDM_VIEW_EXPLORER_PANEL
         MENUITEM "&Barra de herramientas",       IDM_VIEW_TOOLBAR
+        MENUITEM "Barra de &formato",            IDM_VIEW_FORMATBAR
         MENUITEM "&Barra de estado",             IDM_VIEW_STATUSBAR
         MENUITEM "&Esquema de encabezados...\tCtrl+Shift+O", IDM_VIEW_OUTLINE
     END

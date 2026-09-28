@@ -17,6 +17,7 @@ set(UNIT_TEST_SOURCES
     unit/test_platform.cpp
     unit/test_document_io.cpp
     unit/test_editor_view.cpp
+    unit/test_markdown_format.cpp
     unit/test_markdown_parser.cpp
     unit/test_preview_layout.cpp
     unit/test_sync_scroll.cpp
@@ -38,6 +39,8 @@ set(UNIT_TEST_SOURCES
     ../src/io/document_io.cpp
     ../src/io/document_io.h
     ../src/editor/editor_view.cpp
+    ../src/editor/markdown_format.h
+    ../src/editor/markdown_format.cpp
     ../src/editor/editor_view.h
     ../src/markdown/block_tree.cpp
     ../src/markdown/slug.cpp

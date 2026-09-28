@@ -59,6 +59,38 @@ bool IsWrappedBy(std::string_view text, std::string_view prefix, std::string_vie
     return true;
 }
 
+bool IsBlank(std::string_view line) {
+    return line.find_first_not_of(" \t") == std::string_view::npos;
+}
+
+// Opening or closing code fence ("```" or "~~~", optionally with an info string).
+bool IsFence(std::string_view line) {
+    const size_t start = line.find_first_not_of(' ');
+    if (start == std::string_view::npos || start > 3) return false;
+    line.remove_prefix(start);
+    return line.starts_with("```") || line.starts_with("~~~");
+}
+
+std::string ConvertEol(std::string_view text, std::string_view eol) {
+    std::string out;
+    out.reserve(text.size());
+    for (char c : text) {
+        if (c == '\n') {
+            out += eol;
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+// Position of `offset` (counted in `text`, which uses "\n") once its line endings become `eol`.
+sptr_t MapEolOffset(std::string_view text, size_t offset, std::string_view eol) {
+    offset = (std::min)(offset, text.size());
+    const auto newlines = std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(offset), '\n');
+    return static_cast<sptr_t>(offset) + static_cast<sptr_t>(newlines) * static_cast<sptr_t>(eol.size() - 1);
+}
+
 } // namespace
 
 bool EditorView::InitializeScintilla(HINSTANCE hInstance) {
@@ -622,27 +654,221 @@ void EditorView::InsertStrikethrough() {
 }
 
 void EditorView::InsertLink() {
+    InsertLinkMarkup("[");
+}
+
+void EditorView::InsertImage() {
+    InsertLinkMarkup("![");
+}
+
+void EditorView::InsertLinkMarkup(std::string_view open) {
     const sptr_t start = Call(SCI_GETSELECTIONSTART);
     const sptr_t end = Call(SCI_GETSELECTIONEND);
     const std::string selected = GetRange(start, end);
+    const auto openLen = static_cast<sptr_t>(open.size());
     Call(SCI_BEGINUNDOACTION);
     if (!selected.empty()) {
         // A selected URL becomes the target; any other text becomes the label.
         const bool isUrl = selected.starts_with("http://") || selected.starts_with("https://") ||
                            selected.starts_with("www.");
-        const std::string replacement = isUrl ? "[](" + selected + ")" : "[" + selected + "](url)";
+        const std::string replacement =
+            isUrl ? std::string(open) + "](" + selected + ")" : std::string(open) + selected + "](url)";
         Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(replacement.c_str()));
         if (isUrl) {
-            Call(SCI_SETSEL, start + 1, start + 1);
+            Call(SCI_SETSEL, start + openLen, start + openLen);
         } else {
-            const sptr_t urlStart = start + static_cast<sptr_t>(selected.size()) + 3;
+            const sptr_t urlStart = start + openLen + static_cast<sptr_t>(selected.size()) + 2;
             Call(SCI_SETSEL, urlStart, urlStart + 3);
         }
     } else {
-        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>("[](url)"));
-        Call(SCI_SETSEL, start + 1, start + 1);
+        const std::string replacement = std::string(open) + "](url)";
+        Call(SCI_REPLACESEL, 0, reinterpret_cast<sptr_t>(replacement.c_str()));
+        Call(SCI_SETSEL, start + openLen, start + openLen);
     }
     Call(SCI_ENDUNDOACTION);
+}
+
+std::string EditorView::GetLine(sptr_t line) const {
+    return GetRange(Call(SCI_POSITIONFROMLINE, line), Call(SCI_GETLINEENDPOSITION, line));
+}
+
+EditorView::LineRange EditorView::SelectedLines() const {
+    const sptr_t selStart = Call(SCI_GETSELECTIONSTART);
+    const sptr_t selEnd = Call(SCI_GETSELECTIONEND);
+    LineRange r;
+    r.firstLine = Call(SCI_LINEFROMPOSITION, selStart);
+    r.lastLine = Call(SCI_LINEFROMPOSITION, selEnd);
+    if (r.lastLine > r.firstLine && selEnd == Call(SCI_POSITIONFROMLINE, r.lastLine)) {
+        --r.lastLine;
+    }
+    r.start = Call(SCI_POSITIONFROMLINE, r.firstLine);
+    r.end = Call(SCI_GETLINEENDPOSITION, r.lastLine);
+    return r;
+}
+
+void EditorView::TransformSelectedLines(
+    const std::function<std::vector<std::string>(const std::vector<std::string>&)>& transform) {
+    const sptr_t anchor = Call(SCI_GETANCHOR);
+    const sptr_t caret = Call(SCI_GETCURRENTPOS);
+    const LineRange r = SelectedLines();
+
+    // Line endings are kept as they are: the document may mix them.
+    std::vector<std::string> lines;
+    std::vector<std::string> eols;
+    for (sptr_t line = r.firstLine; line <= r.lastLine; ++line) {
+        lines.push_back(GetLine(line));
+        if (line < r.lastLine) {
+            eols.push_back(GetRange(Call(SCI_GETLINEENDPOSITION, line), Call(SCI_POSITIONFROMLINE, line + 1)));
+        }
+    }
+    const std::vector<std::string> out = transform(lines);
+    if (out.size() != lines.size() || out == lines) return;
+
+    std::string text;
+    for (size_t i = 0; i < out.size(); ++i) {
+        text += out[i];
+        if (i < eols.size()) text += eols[i];
+    }
+
+    Call(SCI_BEGINUNDOACTION);
+    Call(SCI_SETTARGETRANGE, r.start, r.end);
+    Call(SCI_REPLACETARGET, static_cast<uptr_t>(text.size()), reinterpret_cast<sptr_t>(text.data()));
+    if (r.firstLine == r.lastLine) {
+        // Keep the caret on the same text: shift it by the change in the marker length.
+        const auto delta = static_cast<sptr_t>(out[0].size()) - static_cast<sptr_t>(lines[0].size());
+        const sptr_t lineEnd = r.start + static_cast<sptr_t>(out[0].size());
+        auto shift = [&](sptr_t pos) { return (std::clamp)(pos + delta, r.start, lineEnd); };
+        Call(SCI_SETSEL, shift(anchor), shift(caret));
+    } else {
+        Call(SCI_SETSEL, r.start, r.start + static_cast<sptr_t>(text.size()));
+    }
+    Call(SCI_ENDUNDOACTION);
+}
+
+void EditorView::SetHeading(int level) {
+    TransformSelectedLines([level](const std::vector<std::string>& lines) {
+        std::vector<std::string> out;
+        out.reserve(lines.size());
+        for (const auto& line : lines) {
+            // Blank lines between the selected paragraphs stay blank.
+            out.push_back(IsBlank(line) && lines.size() > 1 ? line : MarkdownFormat::SetHeadingLevel(line, level));
+        }
+        return out;
+    });
+}
+
+void EditorView::ToggleQuote() {
+    TransformSelectedLines([](const std::vector<std::string>& lines) {
+        return MarkdownFormat::ToggleLineKind(lines, MarkdownFormat::LineKind::Quote);
+    });
+}
+
+void EditorView::ToggleBulletList() {
+    TransformSelectedLines([](const std::vector<std::string>& lines) {
+        return MarkdownFormat::ToggleLineKind(lines, MarkdownFormat::LineKind::Bullet);
+    });
+}
+
+void EditorView::ToggleNumberedList() {
+    TransformSelectedLines([](const std::vector<std::string>& lines) {
+        return MarkdownFormat::ToggleLineKind(lines, MarkdownFormat::LineKind::Numbered);
+    });
+}
+
+void EditorView::ToggleTaskList() {
+    TransformSelectedLines([](const std::vector<std::string>& lines) {
+        return MarkdownFormat::ToggleLineKind(lines, MarkdownFormat::LineKind::Task);
+    });
+}
+
+void EditorView::InsertBlock(std::string_view block, size_t selectStart, size_t selectEnd) {
+    const std::string eol(EolString());
+    const sptr_t lineCount = Call(SCI_GETLINECOUNT);
+    auto isBlankLine = [&](sptr_t line) {
+        return line < 0 || line >= lineCount || IsBlank(GetLine(line));
+    };
+
+    const sptr_t line = Call(SCI_LINEFROMPOSITION, Call(SCI_GETCURRENTPOS));
+    const sptr_t lineStart = Call(SCI_POSITIONFROMLINE, line);
+    const sptr_t lineEnd = Call(SCI_GETLINEENDPOSITION, line);
+
+    // A blank caret line is replaced; otherwise the block goes after the caret line. Either way it
+    // is set apart by blank lines ("---" right below text would turn that text into a heading).
+    std::string text;
+    sptr_t replaceStart = lineEnd;
+    if (isBlankLine(line)) {
+        replaceStart = lineStart;
+        if (!isBlankLine(line - 1)) text += eol;
+    } else {
+        text += eol + eol;
+    }
+    const sptr_t blockStart = replaceStart + static_cast<sptr_t>(text.size());
+    text += ConvertEol(block, eol);
+    if (!isBlankLine(line + 1)) text += eol;
+
+    Call(SCI_BEGINUNDOACTION);
+    Call(SCI_SETTARGETRANGE, replaceStart, lineEnd);
+    Call(SCI_REPLACETARGET, static_cast<uptr_t>(text.size()), reinterpret_cast<sptr_t>(text.data()));
+    Call(SCI_SETSEL, blockStart + MapEolOffset(block, selectStart, eol),
+         blockStart + MapEolOffset(block, selectEnd, eol));
+    Call(SCI_ENDUNDOACTION);
+    Call(SCI_SCROLLCARET);
+}
+
+void EditorView::InsertCodeBlock() {
+    const LineRange r = SelectedLines();
+    if (r.firstLine == r.lastLine && IsBlank(GetLine(r.firstLine))) {
+        InsertBlock("```\n\n```", 4, 4);
+        return;
+    }
+
+    const std::string eol(EolString());
+    const sptr_t lineCount = Call(SCI_GETLINECOUNT);
+    Call(SCI_BEGINUNDOACTION);
+    if (r.firstLine > 0 && r.lastLine + 1 < lineCount && IsFence(GetLine(r.firstLine - 1)) &&
+        IsFence(GetLine(r.lastLine + 1))) {
+        // Toggle off: the lines are exactly the content of a fenced block.
+        const sptr_t closeStart = r.end;
+        Call(SCI_DELETERANGE, closeStart, Call(SCI_GETLINEENDPOSITION, r.lastLine + 1) - closeStart);
+        const sptr_t openStart = Call(SCI_POSITIONFROMLINE, r.firstLine - 1);
+        const sptr_t openLen = r.start - openStart;
+        Call(SCI_DELETERANGE, openStart, openLen);
+        Call(SCI_SETSEL, openStart, r.end - openLen);
+    } else {
+        // Wrap the whole lines; the caret lands after the opening fence to type the language.
+        const std::string close = eol + "```";
+        const std::string open = "```" + eol;
+        Call(SCI_INSERTTEXT, r.end, reinterpret_cast<sptr_t>(close.c_str()));
+        Call(SCI_INSERTTEXT, r.start, reinterpret_cast<sptr_t>(open.c_str()));
+        Call(SCI_SETSEL, r.start + 3, r.start + 3);
+    }
+    Call(SCI_ENDUNDOACTION);
+}
+
+void EditorView::InsertTable() {
+    constexpr std::string_view kTable =
+        "| Columna 1 | Columna 2 | Columna 3 |\n"
+        "| --------- | --------- | --------- |\n"
+        "|           |           |           |";
+    InsertBlock(kTable, 2, 11); // Selects the first header
+}
+
+void EditorView::InsertHorizontalRule() {
+    InsertBlock("---", 3, 3);
+}
+
+void EditorView::InsertDiagram(MarkdownFormat::DiagramKind kind) {
+    const std::string block = "```mermaid\n" + std::string(MarkdownFormat::MermaidTemplate(kind)) + "\n```";
+    const size_t bodyEnd = block.size() - 4; // Caret at the end of the diagram source
+    InsertBlock(block, bodyEnd, bodyEnd);
+}
+
+MarkdownFormat::LineState EditorView::GetCaretLineState() const {
+    const sptr_t line = Call(SCI_LINEFROMPOSITION, Call(SCI_GETCURRENTPOS));
+    const sptr_t start = Call(SCI_POSITIONFROMLINE, line);
+    // The markers are at the start of the line: never copy a huge line on every caret move.
+    const sptr_t end = (std::min)(Call(SCI_GETLINEENDPOSITION, line), start + 256);
+    return MarkdownFormat::GetLineState(GetRange(start, end));
 }
 
 EditorView::CursorPos EditorView::GetCursorPosition() const {
