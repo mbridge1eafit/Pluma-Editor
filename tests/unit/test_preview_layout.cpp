@@ -355,3 +355,147 @@ TEST_F(PreviewLayoutFixture, MermaidDiagramIsPaintedOffscreen) {
         EXPECT_GT(painted, 3000u) << (dark ? "dark" : "light");
     }
 }
+
+// ==============================================================================
+// Preview -> source hit-testing (double-click to edit, task checkboxes)
+// ==============================================================================
+
+namespace {
+
+class SourceHitTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                            reinterpret_cast<IUnknown**>(m_factory.GetAddressOf()));
+        ASSERT_TRUE(m_engine.Initialize(m_factory.Get()));
+    }
+
+    void Layout(const std::string& md) {
+        m_md = md;
+        m_tree = Md4cAdapter::Parse(m_md);
+        m_engine.ComputeLayout(*m_tree, 800.0f, 96, PreviewThemeColors::Light());
+    }
+
+    const LayoutBlock& Block(BlockType type, size_t nth = 0) const {
+        for (const auto& b : m_engine.GetBlocks()) {
+            if (b.type == type && !b.isQuoteBar && nth-- == 0) return b;
+        }
+        ADD_FAILURE() << "block not found";
+        return m_engine.GetBlocks().front();
+    }
+
+    // Content-space point on the left quarter of the character at `pos` of a text layout.
+    static D2D1_POINT_2F PointOf(IDWriteTextLayout* layout, D2D1_POINT_2F origin, UINT32 pos) {
+        float x = 0.0f;
+        float y = 0.0f;
+        DWRITE_HIT_TEST_METRICS m{};
+        layout->HitTestTextPosition(pos, FALSE, &x, &y, &m);
+        return D2D1::Point2F(origin.x + x + m.width * 0.25f, origin.y + y + m.height * 0.5f);
+    }
+
+    // Byte offset in the source that a hit designates.
+    size_t ByteOffset(const SourceHit& hit) const {
+        size_t pos = hit.srcOffset;
+        UINT32 units = 0;
+        while (units < hit.utf16Delta && pos < m_md.size()) {
+            const auto c = static_cast<unsigned char>(m_md[pos]);
+            const size_t len = c < 0x80 ? 1 : (c >= 0xF0 ? 4 : (c >= 0xE0 ? 3 : 2));
+            units += len == 4 ? 2 : 1;
+            pos += len;
+        }
+        return pos;
+    }
+
+    SourceHit HitChar(const LayoutBlock& b, UINT32 pos) const {
+        const D2D1_POINT_2F p = PointOf(b.textLayout.Get(), b.textOrigin, pos);
+        return m_engine.HitTestSource(p.x, p.y);
+    }
+
+    ComPtr<IDWriteFactory> m_factory;
+    LayoutEngine m_engine;
+    std::string m_md;
+    std::unique_ptr<BlockTree> m_tree;
+};
+
+} // namespace
+
+TEST_F(SourceHitTest, ParagraphCharactersMapThroughMarkup) {
+    Layout("Intro\n\nHola **mundo** y m\xC3\xA1s `c\xC3\xB3" "digo` texto\n");
+    const LayoutBlock& p = Block(BlockType::Paragraph, 1);
+    const std::wstring visible = L"Hola mundo y más có" L"digo texto";
+
+    SourceHit hit = HitChar(p, static_cast<UINT32>(visible.find(L"mundo")));
+    EXPECT_TRUE(hit.exact);
+    EXPECT_EQ(ByteOffset(hit), m_md.find("mundo"));
+    EXPECT_EQ(hit.line, 3);
+
+    hit = HitChar(p, static_cast<UINT32>(visible.find(L"digo")));
+    EXPECT_EQ(ByteOffset(hit), m_md.find("digo"));
+
+    hit = HitChar(p, static_cast<UINT32>(visible.find(L"texto")));
+    EXPECT_EQ(ByteOffset(hit), m_md.find("texto"));
+}
+
+TEST_F(SourceHitTest, GeneratedTextMapsToItsSourceStart) {
+    Layout("a :rocket: b\n");
+    const LayoutBlock& p = Block(BlockType::Paragraph);
+    const SourceHit hit = HitChar(p, 2); // The emoji
+    EXPECT_TRUE(hit.exact);
+    EXPECT_EQ(ByteOffset(hit), m_md.find(':'));
+}
+
+TEST_F(SourceHitTest, HeadingListAndCodeBlock) {
+    Layout("## T\xC3\xADtulo\n\n- uno\n- dos\n\n```\nabc\ndef\n```\n");
+    SourceHit hit = HitChar(Block(BlockType::Heading), 2);
+    EXPECT_EQ(ByteOffset(hit), m_md.find("tulo"));
+
+    hit = HitChar(Block(BlockType::ListItem, 1), 2);
+    EXPECT_EQ(ByteOffset(hit), m_md.find("dos") + 2);
+
+    hit = HitChar(Block(BlockType::CodeBlock), 5); // Second character of "def"
+    EXPECT_EQ(ByteOffset(hit), m_md.find("def") + 1);
+}
+
+TEST_F(SourceHitTest, TableCellsResolveRowLineAndText) {
+    Layout("| A | B |\n|---|---|\n| uno | dos |\n| tres | cuatro |\n");
+    const LayoutBlock& table = Block(BlockType::Table);
+    ASSERT_EQ(table.tableRows.size(), 3u);
+    const TableCellLayout& cell = table.tableRows[2][1];
+    const D2D1_POINT_2F p = PointOf(cell.textLayout.Get(), cell.textOrigin, 2);
+    const SourceHit hit = m_engine.HitTestSource(p.x, p.y);
+    EXPECT_EQ(hit.line, 4);
+    EXPECT_TRUE(hit.exact);
+    EXPECT_EQ(ByteOffset(hit), m_md.find("cuatro") + 2);
+
+    const TableCellLayout& header = table.tableRows[0][0];
+    const SourceHit headerHit = m_engine.HitTestSource(header.rect.left + 2.0f, header.rect.top + 2.0f);
+    EXPECT_EQ(headerHit.line, 1);
+}
+
+TEST_F(SourceHitTest, PointBelowContentUsesNearestBlock) {
+    Layout("uno\n\ndos\n\n---\n");
+    const SourceHit hit = m_engine.HitTestSource(10.0f, m_engine.GetTotalHeight() + 500.0f);
+    EXPECT_EQ(hit.line, 5);
+    EXPECT_FALSE(hit.exact);
+}
+
+TEST_F(SourceHitTest, TaskBoxesAreHitAndToggled) {
+    Layout("- [ ] uno\n- [x] dos\n- normal\n");
+    const LayoutBlock& first = Block(BlockType::ListItem, 0);
+    const D2D1_RECT_F& box = first.markerRect;
+    const LayoutBlock* hit = m_engine.HitTestTaskBox((box.left + box.right) * 0.5f, (box.top + box.bottom) * 0.5f);
+    ASSERT_NE(hit, nullptr);
+    EXPECT_EQ(hit->taskMarkOffset, 3);
+    EXPECT_FALSE(hit->isTaskChecked);
+
+    m_engine.SetTaskChecked(3, true);
+    EXPECT_TRUE(first.isTaskChecked);
+
+    // The item text and plain bullets are not checkboxes.
+    const D2D1_POINT_2F text = PointOf(first.textLayout.Get(), first.textOrigin, 1);
+    EXPECT_EQ(m_engine.HitTestTaskBox(text.x, text.y), nullptr);
+    const LayoutBlock& bullet = Block(BlockType::ListItem, 2);
+    EXPECT_EQ(m_engine.HitTestTaskBox((bullet.markerRect.left + bullet.markerRect.right) * 0.5f,
+                                      (bullet.markerRect.top + bullet.markerRect.bottom) * 0.5f),
+              nullptr);
+}

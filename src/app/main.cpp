@@ -820,6 +820,23 @@ public:
         UpdateStatusBar();
     }
 
+    // Double-click in the preview: caret on the clicked character, showing the editor if hidden.
+    void NavigateToSource(const Pluma::Preview::SourceHit& hit) {
+        if (m_viewMode == ViewMode::PreviewOnly) {
+            // Narrowing the preview reflows it: keep the same content at the top of both views.
+            const int topLine = m_preview.GetLineForCurrentScroll();
+            SetViewMode(ViewMode::Split);
+            m_preview.ScrollToLine(topLine);
+            m_editor.ScrollToDocLine(topLine);
+        }
+        if (hit.exact) {
+            m_editor.GotoSourcePosition(hit.srcOffset, hit.utf16Delta);
+        } else {
+            m_editor.GotoLine(hit.line);
+        }
+        m_editor.SetFocus();
+    }
+
     void FocusMainView() {
         if (m_viewMode == ViewMode::PreviewOnly) {
             ::SetFocus(m_preview.GetHwnd()); // Keyboard scrolling in the preview
@@ -1177,6 +1194,16 @@ private:
                 if (PromptSaveChanges()) {
                     OpenFile(path);
                 }
+            });
+            m_preview.SetOnSourceNavigateCallback([this](const Pluma::Preview::SourceHit& hit) {
+                NavigateToSource(hit);
+            });
+            m_preview.SetOnToggleTaskCallback([this](uint64_t treeVersion, int markOffset, bool checked) {
+                // Source offsets are only valid for the text the displayed tree was parsed from.
+                if (markOffset < 0 || treeVersion != m_docVersion || m_reparsePosted) {
+                    return false;
+                }
+                return m_editor.SetTaskMark(static_cast<size_t>(markOffset), checked);
             });
 
             m_syncScroll = std::make_unique<Pluma::Sync::SyncScrollController>(&m_editor, &m_preview);

@@ -165,10 +165,9 @@ std::string_view LookupEmojiShortcode(std::string_view name) {
     return {};
 }
 
-std::string ReplaceEmojiShortcodes(std::string_view text) {
-    std::string out;
+std::vector<EmojiShortcodeMatch> FindEmojiShortcodes(std::string_view text) {
+    std::vector<EmojiShortcodeMatch> matches;
     size_t pos = 0;
-    size_t copied = 0;
     while ((pos = text.find(':', pos)) != std::string_view::npos) {
         size_t end = pos + 1;
         while (end < text.size() && IsShortcodeChar(text[end])) {
@@ -177,12 +176,7 @@ std::string ReplaceEmojiShortcodes(std::string_view text) {
         if (end < text.size() && text[end] == ':' && end > pos + 1) {
             std::string_view emoji = LookupEmojiShortcode(text.substr(pos + 1, end - pos - 1));
             if (!emoji.empty()) {
-                if (out.empty()) {
-                    out.reserve(text.size());
-                }
-                out.append(text.substr(copied, pos - copied));
-                out.append(emoji);
-                copied = end + 1;
+                matches.push_back(EmojiShortcodeMatch{pos, end + 1 - pos, emoji});
                 pos = end + 1;
                 continue;
             }
@@ -192,8 +186,21 @@ std::string ReplaceEmojiShortcodes(std::string_view text) {
         }
         pos = end;
     }
-    if (copied == 0) {
+    return matches;
+}
+
+std::string ReplaceEmojiShortcodes(std::string_view text) {
+    const auto matches = FindEmojiShortcodes(text);
+    if (matches.empty()) {
         return std::string(text);
+    }
+    std::string out;
+    out.reserve(text.size());
+    size_t copied = 0;
+    for (const auto& m : matches) {
+        out.append(text.substr(copied, m.pos - copied));
+        out.append(m.emoji);
+        copied = m.pos + m.length;
     }
     out.append(text.substr(copied));
     return out;

@@ -69,11 +69,28 @@ struct LinkHitBox {
     UINT32 textLength = 0;
 };
 
+// Visible text that is a verbatim copy of the Markdown source: UTF-16 positions
+// [textStart, textStart + textLength) of a text layout start at source byte srcOffset.
+struct SourceSegment {
+    UINT32 textStart = 0;
+    UINT32 textLength = 0;
+    UINT32 srcOffset = 0;
+};
+
+// Source position under a point of the preview (double-click to edit).
+struct SourceHit {
+    int line = 1;            // 1-based source line, always valid
+    bool exact = false;      // srcOffset/utf16Delta locate the character under the point
+    UINT32 srcOffset = 0;    // UTF-8 byte offset of a verbatim segment in the source...
+    UINT32 utf16Delta = 0;   // ...plus this many UTF-16 code units
+};
+
 struct TableCellLayout {
     D2D1_RECT_F rect{};
     D2D1_POINT_2F textOrigin{};
     ComPtr<IDWriteTextLayout> textLayout;
     std::vector<EffectRange> effects;
+    std::vector<SourceSegment> sourceMap;
     bool isHeader = false;
     int rowIndex = 0;
     Markdown::Alignment align = Markdown::Alignment::Default;
@@ -100,9 +117,11 @@ struct LayoutBlock {
     D2D1_POINT_2F textOrigin{};
     ComPtr<IDWriteTextLayout> textLayout;
     std::vector<EffectRange> effects;
+    std::vector<SourceSegment> sourceMap; // Ordered by textStart
     int level = 0;              // Heading level (1-6)
     bool isTask = false;
     bool isTaskChecked = false;
+    int taskMarkOffset = -1;    // Source byte offset of the task mark (' ', 'x' or 'X')
     bool isOrdered = false;
     int itemNumber = 1;
     int listDepth = 0;          // Nesting depth of the list (bullet style)
@@ -151,6 +170,16 @@ public:
     // Hit-testing: returns URL if point (x, y) in content space hits a link
     std::string HitTestLink(float x, float y) const;
     const LinkHitBox* HitTestLinkBox(float x, float y) const;
+
+    // Source position of the text under (x, y) in content space; the nearest block when the
+    // point falls between blocks.
+    SourceHit HitTestSource(float x, float y) const;
+
+    // Task list item whose checkbox contains (x, y), or nullptr.
+    const LayoutBlock* HitTestTaskBox(float x, float y) const;
+
+    // Updates a task checkbox ahead of the re-parse that confirms it (instant feedback).
+    void SetTaskChecked(int taskMarkOffset, bool checked);
 
     // Returns Y position for an anchor slug, or negative value if not found (F-10)
     float GetAnchorY(std::string_view slug) const;

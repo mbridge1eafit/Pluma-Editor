@@ -84,6 +84,9 @@ public:
 
     // Navigation and Search (F-04)
     void GotoLine(int line);
+    // Moves the caret `utf16Units` UTF-16 code units past a UTF-8 byte offset (a character
+    // located in the preview).
+    void GotoSourcePosition(size_t byteOffset, size_t utf16Units);
     int GetFirstVisibleDocLine() const;
     void ScrollToDocLine(int docLine);
     bool FindNext(std::string_view text, bool matchCase, bool wholeWord, bool regex, bool forward = true);
@@ -92,6 +95,10 @@ public:
 
     // True when the main selection is exactly `text` (case-insensitive unless matchCase).
     bool SelectionMatches(std::string_view text, bool matchCase) const;
+
+    // Checks or unchecks the GFM task mark at `markOffset` (the byte between '[' and ']') as one
+    // undoable edit. Returns false, changing nothing, when there is no task mark there.
+    bool SetTaskMark(size_t markOffset, bool checked);
 
     // Markdown formatting helpers (F-12)
     void WrapSelection(std::string_view prefix, std::string_view suffix);

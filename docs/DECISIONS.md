@@ -195,3 +195,18 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
   - *Actualizador que reemplaza `pluma.exe` directamente (sin instalador):* obligaría a mantener dos caminos de instalación y a reimplementar el registro de asociaciones y la desinstalación.
   - *Instalación para todos los usuarios (Program Files):* cada actualización necesitaría UAC.
   - *Verificar solo con HTTPS:* no detecta descargas corruptas o truncadas; el SHA-256 publicado con la versión sí. (El instalador no está firmado con Authenticode: requiere un certificado de pago.)
+
+---
+
+## [2026-09-28] Decisión 014: Edición desde la vista previa, fase 1 (ir al fuente y casillas de tareas)
+
+- **Contexto:** Se pidió poder editar el documento desde la vista previa, sobre todo en el modo «Solo vista previa». Un editor WYSIWYG completo sobre el render Direct2D (cursor, selección, IME, reglas para cada construcción Markdown) equivale a escribir un segundo editor, y el layout completo ya cuesta ~200 ms en un documento de 124 KB, así que no admite teclear directamente en la vista previa. Se optó por una primera fase que conserva la arquitectura: el documento de Scintilla sigue siendo la única fuente de verdad, y cada acción en la vista previa se traduce en una operación sobre él (deshacer, indicador de modificado, guardado y re-parseo funcionan sin cambios).
+- **Decisión:**
+  - *Posiciones de origen en el AST:* `Span::source` guarda los tramos (`SourceRun`) de `Span::text` que son copia literal del fuente, a partir de los punteros que md4c entrega en `OnText`. El texto generado (entidades, saltos blandos, HTML crudo, emojis `:shortcode:`) no tiene tramo; la sustitución de emojis reajusta los tramos (`FindEmojiShortcodes`). `Block::taskMarkOffset` guarda el `task_mark_offset` de md4c. Coste medido: +6 % de tiempo de parseo en el documento de 10 MB; el layout no cambia.
+  - *Mapa texto visible → fuente en el layout:* `LayoutBlock::sourceMap` y `TableCellLayout::sourceMap` (`SourceSegment`) asocian posiciones UTF-16 del `IDWriteTextLayout` con offsets en bytes. `LayoutEngine::HitTestSource` usa `IDWriteTextLayout::HitTestPoint` y devuelve un `SourceHit`: offset exacto más un desplazamiento en unidades UTF-16, que `EditorView::GotoSourcePosition` convierte con `SCI_POSITIONRELATIVECODEUNITS`, o solo la línea cuando no hay texto literal (diagramas, HTML crudo). Las filas de tabla se resuelven por línea (una fila GFM = una línea del fuente).
+  - *Doble clic fuera de un enlace:* coloca el cursor del editor en el carácter pulsado; en modo «Solo vista previa» pasa antes a «Vista dividida», alineando ambos paneles.
+  - *Casillas de tareas clicables:* cambian `[ ]`/`[x]` con `EditorView::SetTaskMark` (una sola edición deshacible que no mueve el cursor). Solo se aceptan si el árbol mostrado corresponde al texto actual (`version == m_docVersion` y ningún re-parseo pendiente) y si el fuente tiene realmente `[ ]`, `[x]` o `[X]` en esa posición. La casilla se redibuja al instante (`LayoutEngine::SetTaskChecked`) sin esperar al re-parseo.
+- **Alternativas descartadas:**
+  - *Editor WYSIWYG en la vista previa:* coste de meses, muchos casos ambiguos (¿escribir tras `**negrita**` va dentro o fuera?) y latencia de tecleo inaceptable con el layout completo actual.
+  - *Alinear texto renderizado y fuente por búsqueda de subsecuencias:* no toca el parser, pero falla con la cadena de información de las vallas de código, los emojis y las URL de los enlaces; md4c ya da posiciones exactas.
+  - *Devolver solo la línea del bloque:* insuficiente en párrafos largos, que ocupan una sola línea del fuente.

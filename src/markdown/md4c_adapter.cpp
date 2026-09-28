@@ -15,6 +15,7 @@ namespace Pluma::Markdown {
 namespace {
 
 constexpr std::string_view kReplacementChar = "\xEF\xBF\xBD"; // U+FFFD
+constexpr size_t kNoSource = static_cast<size_t>(-1);
 
 void AppendUtf8(std::string& out, unsigned cp) {
     if (cp == 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
@@ -183,34 +184,48 @@ struct ParserState {
         }
     }
 
-    // Appends plain text to the innermost span/block, merging adjacent text runs.
-    void AppendText(std::string_view text) {
+    // Appends plain text to the innermost span/block, merging adjacent text runs. `srcOffset` is
+    // the position of `text` in the source when it is a verbatim copy of it (kNoSource otherwise).
+    void AppendText(std::string_view text, size_t srcOffset = kNoSource) {
         if (text.empty()) return;
         if (!spanStack.empty()) {
             Span* top = spanStack.back();
             if (top->type == SpanType::Code) {
-                top->text.append(text);
+                AppendToSpan(*top, text, srcOffset);
                 return;
             }
-            AppendToList(top->children, text, SpanType::Text);
+            AppendToList(top->children, text, SpanType::Text, srcOffset);
             return;
         }
         if (!blockStack.empty()) {
             Block* topBlock = blockStack.back();
             const SpanType type = (topBlock->type == BlockType::CodeBlock) ? SpanType::Code : SpanType::Text;
-            AppendToList(topBlock->inlineContent, text, type);
+            AppendToList(topBlock->inlineContent, text, type, srcOffset);
         }
     }
 
-    static void AppendToList(std::vector<Span>& list, std::string_view text, SpanType type) {
-        if (!list.empty() && list.back().type == type && list.back().children.empty()) {
-            list.back().text.append(text);
-        } else {
+    static void AppendToList(std::vector<Span>& list, std::string_view text, SpanType type, size_t srcOffset) {
+        if (list.empty() || list.back().type != type || !list.back().children.empty()) {
             Span span;
             span.type = type;
-            span.text.assign(text);
             list.push_back(std::move(span));
         }
+        AppendToSpan(list.back(), text, srcOffset);
+    }
+
+    static void AppendToSpan(Span& span, std::string_view text, size_t srcOffset) {
+        if (srcOffset != kNoSource) {
+            const auto textOffset = static_cast<uint32_t>(span.text.size());
+            const auto length = static_cast<uint32_t>(text.size());
+            const auto src = static_cast<uint32_t>(srcOffset);
+            SourceRun* last = span.source.empty() ? nullptr : &span.source.back();
+            if (last && last->textOffset + last->length == textOffset && last->srcOffset + last->length == src) {
+                last->length += length; // Contiguous in both the text and the source
+            } else {
+                span.source.push_back(SourceRun{textOffset, length, src});
+            }
+        }
+        span.text.append(text);
     }
 
     void HandleHtmlTag(std::string_view tag) {
@@ -349,6 +364,7 @@ int OnEnterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
         if (liDetail && liDetail->is_task) {
             block->isTask = true;
             block->isTaskChecked = (liDetail->task_mark == 'x' || liDetail->task_mark == 'X');
+            block->taskMarkOffset = static_cast<int>(liDetail->task_mark_offset);
         }
         break;
     }
@@ -527,16 +543,53 @@ int OnText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
     case MD_TEXT_HTML:
         state->HandleHtml(std::string_view(text, size));
         return 0;
-    default:
-        state->AppendText(std::string_view(text, size));
+    default: {
+        // Code-block line ends are static "\n" strings outside the source: text without position.
+        const bool inSource = text >= state->markdown.data() &&
+                              text + size <= state->markdown.data() + state->markdown.size();
+        state->AppendText(std::string_view(text, size),
+                          inSource ? static_cast<size_t>(text - state->markdown.data()) : kNoSource);
         return 0;
     }
+    }
+}
+
+// Replaces the emoji shortcodes of a text span, keeping its source runs aligned with the new text.
+void ReplaceShortcodesInSpan(Span& span) {
+    const auto matches = FindEmojiShortcodes(span.text);
+    if (matches.empty()) return;
+
+    std::string text;
+    text.reserve(span.text.size());
+    std::vector<SourceRun> runs;
+    // Copies span.text[from, to) and the parts of the source runs that fall inside it.
+    auto copyVerbatim = [&](size_t from, size_t to) {
+        for (const auto& run : span.source) {
+            const size_t begin = (std::max)(from, static_cast<size_t>(run.textOffset));
+            const size_t end = (std::min)(to, static_cast<size_t>(run.textOffset) + run.length);
+            if (begin < end) {
+                runs.push_back(SourceRun{static_cast<uint32_t>(text.size() + (begin - from)),
+                                         static_cast<uint32_t>(end - begin),
+                                         static_cast<uint32_t>(run.srcOffset + (begin - run.textOffset))});
+            }
+        }
+        text.append(span.text, from, to - from);
+    };
+    size_t copied = 0;
+    for (const auto& m : matches) {
+        copyVerbatim(copied, m.pos);
+        text.append(m.emoji);
+        copied = m.pos + m.length;
+    }
+    copyVerbatim(copied, span.text.size());
+    span.text = std::move(text);
+    span.source = std::move(runs);
 }
 
 void ReplaceShortcodesInSpans(std::vector<Span>& spans) {
     for (auto& span : spans) {
         if (span.type == SpanType::Text && span.text.find(':') != std::string::npos) {
-            span.text = ReplaceEmojiShortcodes(span.text);
+            ReplaceShortcodesInSpan(span);
         }
         if (span.type != SpanType::Code) {
             ReplaceShortcodesInSpans(span.children);

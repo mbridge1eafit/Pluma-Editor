@@ -42,12 +42,21 @@ enum class Alignment {
     Right
 };
 
+// Bytes [textOffset, textOffset + length) of Span::text are a verbatim copy of the source
+// bytes starting at srcOffset (maps preview positions back to the document).
+struct SourceRun {
+    uint32_t textOffset = 0;
+    uint32_t length = 0;
+    uint32_t srcOffset = 0;
+};
+
 struct Span {
     SpanType type = SpanType::Text;
     std::string text;
     std::string url;      // For links and images
     std::string title;    // For links and images
     std::vector<Span> children;
+    std::vector<SourceRun> source; // Text/Code spans: verbatim pieces of `text`, in order
 };
 
 struct Block {
@@ -57,6 +66,7 @@ struct Block {
     int startNumber = 1;                  // For ordered list
     bool isTask = false;                  // For task list items (GFM)
     bool isTaskChecked = false;           // [x] vs [ ]
+    int taskMarkOffset = -1;              // Source byte offset of the char between '[' and ']'
     bool isHeaderCell = false;            // For TableCell (TH vs TD)
     bool isRawHtml = false;               // Paragraph produced from a raw HTML block (tags stripped)
     Alignment align = Alignment::Default; // For TableCell

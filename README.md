@@ -87,6 +87,7 @@ ctest --preset asan --output-on-failure
 ## Configuración
 
 - **Preferencias:** `Configuración > Preferencias…` (`Ctrl+,`). Se guardan en `%APPDATA%\Pluma\pluma.ini`; si existe un `pluma.ini` junto a `pluma.exe`, se usa ese archivo (modo portable).
+- **Editar desde la vista previa:** doble clic sobre un texto de la vista previa lleva el cursor del editor a ese carácter (en «Solo vista previa» cambia a vista dividida). Las casillas de las listas de tareas se marcan y desmarcan con un clic; `Ctrl+Z` lo deshace.
 - **Panel de encabezados:** `Ver > Panel de encabezados` (`Ctrl+Shift+E`). Se redimensiona arrastrando su borde derecho (doble clic restablece el ancho).
 - **Editor predeterminado de Markdown:** `Configuración > Establecer como editor predeterminado de Markdown…` registra Pluma para `.md`, `.markdown` y `.mdown` (sin permisos de administrador) y abre el selector de Windows para confirmar el cambio.
 
