@@ -69,6 +69,8 @@ set(PLUMA_SOURCES
     src/io/document_io.cpp
     src/editor/editor_view.h
     src/editor/editor_view.cpp
+    src/editor/markdown_format.h
+    src/editor/markdown_format.cpp
     src/markdown/block_tree.h
     src/markdown/block_tree.cpp
     src/markdown/slug.h

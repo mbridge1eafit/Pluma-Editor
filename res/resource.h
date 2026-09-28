@@ -39,11 +39,33 @@
 #define IDM_FORMAT_CODE                 40053
 #define IDM_FORMAT_STRIKE               40054
 #define IDM_FORMAT_LINK                 40055
+#define IDM_FORMAT_QUOTE                40056
+#define IDM_FORMAT_BULLET_LIST          40057
+#define IDM_FORMAT_NUMBERED_LIST        40058
+#define IDM_FORMAT_TASK_LIST            40059
+#define IDM_FORMAT_CODE_BLOCK           40060
+#define IDM_FORMAT_IMAGE                40064
+#define IDM_FORMAT_TABLE                40065
+#define IDM_FORMAT_HRULE                40066
+#define IDM_FORMAT_HEADING_MENU         40067   // Format bar drop-downs (open a menu, no action)
+#define IDM_FORMAT_DIAGRAM_MENU         40068
+#define IDM_FORMAT_HEADING_0            40080   // Paragraph; IDM_FORMAT_HEADING_0 + n = heading level n
+#define IDM_FORMAT_HEADING_1            40081
+#define IDM_FORMAT_HEADING_2            40082
+#define IDM_FORMAT_HEADING_3            40083
+#define IDM_FORMAT_HEADING_4            40084
+#define IDM_FORMAT_HEADING_5            40085
+#define IDM_FORMAT_HEADING_6            40086
+#define IDM_FORMAT_DIAGRAM_FLOWCHART    40087
+#define IDM_FORMAT_DIAGRAM_SEQUENCE     40088
+#define IDM_FORMAT_DIAGRAM_STATE        40089
+#define IDM_FORMAT_DIAGRAM_PIE          40090
 
 #define IDM_VIEW_OUTLINE_PANEL          40035
 #define IDM_VIEW_STATUSBAR              40036
 #define IDM_VIEW_EXPLORER_PANEL         40037
 #define IDM_VIEW_TOOLBAR                40038
+#define IDM_VIEW_FORMATBAR              40039
 
 #define IDM_SETTINGS_PREFERENCES        40071
 #define IDM_SETTINGS_DEFAULT_EDITOR     40072

@@ -264,6 +264,7 @@ Settings ParseSettings(std::string_view iniUtf8) {
     ReadBool(v, "view.showexplorer", s.showExplorer);
     ReadBool(v, "view.showstatusbar", s.showStatusBar);
     ReadBool(v, "view.showtoolbar", s.showToolbar);
+    ReadBool(v, "view.showformatbar", s.showFormatBar);
     ReadBool(v, "view.syncscroll", s.syncScroll);
     ReadInt(v, "view.outlinewidth", s.outlineWidth);
     ReadInt(v, "view.explorerwidth", s.explorerWidth);
@@ -317,6 +318,7 @@ std::string SerializeSettings(const Settings& s) {
     w.Bool("ShowExplorer", s.showExplorer);
     w.Bool("ShowStatusBar", s.showStatusBar);
     w.Bool("ShowToolbar", s.showToolbar);
+    w.Bool("ShowFormatBar", s.showFormatBar);
     w.Bool("SyncScroll", s.syncScroll);
     w.Int("OutlineWidth", s.outlineWidth);
     w.Int("ExplorerWidth", s.explorerWidth);

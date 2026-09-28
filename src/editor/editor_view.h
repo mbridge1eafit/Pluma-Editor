@@ -4,11 +4,15 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "Scintilla.h"
 #include "SciLexer.h"
+
+#include "markdown_format.h"
 
 namespace Pluma::Editor {
 
@@ -96,6 +100,21 @@ public:
     void InsertCode();
     void InsertStrikethrough();
     void InsertLink();
+    void InsertImage();
+
+    // Block formatting (format bar): acts on every line touched by the selection.
+    void SetHeading(int level); // 0 = paragraph
+    void ToggleQuote();
+    void ToggleBulletList();
+    void ToggleNumberedList();
+    void ToggleTaskList();
+    void InsertCodeBlock();
+    void InsertTable();
+    void InsertHorizontalRule();
+    void InsertDiagram(MarkdownFormat::DiagramKind kind);
+
+    // Heading level, quote and list markers of the caret line.
+    MarkdownFormat::LineState GetCaretLineState() const;
 
     // Editor metrics and status info (F-13)
     struct CursorPos {
@@ -126,6 +145,23 @@ public:
 private:
     void SetupStyles(bool darkMode);
     std::string GetRange(sptr_t start, sptr_t end) const;
+    std::string GetLine(sptr_t line) const;
+    void InsertLinkMarkup(std::string_view open);
+
+    // Whole lines covered by the selection; a selection ending at column 0 excludes that line.
+    struct LineRange {
+        sptr_t firstLine = 0;
+        sptr_t lastLine = 0;
+        sptr_t start = 0;
+        sptr_t end = 0;
+    };
+    LineRange SelectedLines() const;
+    void TransformSelectedLines(
+        const std::function<std::vector<std::string>(const std::vector<std::string>&)>& transform);
+
+    // Inserts a block (written with '\n' line endings) on its own lines, separated from the
+    // surrounding text by blank lines, and selects [selectStart, selectEnd) inside it.
+    void InsertBlock(std::string_view block, size_t selectStart, size_t selectEnd);
 
     HWND m_hwndScintilla = nullptr;
     SciFnDirect m_fnDirect = nullptr;

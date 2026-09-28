@@ -23,6 +23,22 @@ constexpr wchar_t kFolder[] = L"";
 constexpr wchar_t kList[] = L"";
 constexpr wchar_t kRefresh[] = L"";
 constexpr wchar_t kClose[] = L"";
+constexpr wchar_t kChevronDown[] = L"";
+constexpr wchar_t kMore[] = L"";
+// Format bar
+constexpr wchar_t kBold[] = L"";
+constexpr wchar_t kItalic[] = L"";
+constexpr wchar_t kStrikethrough[] = L"";
+constexpr wchar_t kCode[] = L"";
+constexpr wchar_t kBulletList[] = L"";
+constexpr wchar_t kTaskList[] = L"";
+constexpr wchar_t kQuote[] = L"";
+constexpr wchar_t kLink[] = L"";
+constexpr wchar_t kImage[] = L"";
+constexpr wchar_t kTable[] = L"";
+constexpr wchar_t kCodeBlock[] = L"";
+constexpr wchar_t kHorizontalRule[] = L"";
+constexpr wchar_t kDiagram[] = L"";
 } // namespace Glyph
 
 // Creates the system icon font at `pixelHeight` (Segoe Fluent Icons, falling back to Segoe MDL2 Assets).
