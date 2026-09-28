@@ -8,6 +8,9 @@
 #include <shobjidl.h> // IFileDialog
 #include <shellapi.h>
 #include <shlobj.h>   // SHAddToRecentDocs
+#include <d3d11.h>
+#include <wrl/client.h>
+#include <thread>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -59,6 +62,51 @@ std::string Utf16ToUtf8(std::wstring_view utf16) {
     WideCharToMultiByte(CP_UTF8, 0, utf16.data(), static_cast<int>(utf16.size()), result.data(), count, nullptr, nullptr);
     return result;
 }
+
+// Adds a file to the Windows recent documents on a thread-pool thread: the shell call takes
+// ~25 ms, which would otherwise delay showing the document that was just opened.
+void AddToRecentDocsAsync(const std::filesystem::path& path) {
+    auto* file = new std::wstring(path.wstring());
+    const PTP_SIMPLE_CALLBACK callback = [](PTP_CALLBACK_INSTANCE, void* context) {
+        std::unique_ptr<std::wstring> owned(static_cast<std::wstring*>(context));
+        const HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        SHAddToRecentDocs(SHARD_PATHW, owned->c_str());
+        if (SUCCEEDED(hr)) CoUninitialize();
+    };
+    if (!TrySubmitThreadpoolCallback(callback, file, nullptr)) {
+        SHAddToRecentDocs(SHARD_PATHW, file->c_str());
+        delete file;
+    }
+}
+
+// The first hardware Direct2D render target spends ~100 ms loading and initializing the GPU
+// driver. Creating a Direct3D device on another thread while the window is being built overlaps
+// that work with the UI setup; the device is kept until the preview has created its own.
+class GpuPrewarm {
+public:
+    GpuPrewarm() {
+        HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!event) return;
+        m_release = std::shared_ptr<void>(event, CloseHandle); // Shared with the thread
+        // Detached: exiting never waits for it, even if a faulty driver hangs creating the device.
+        std::thread([release = m_release] {
+            Microsoft::WRL::ComPtr<ID3D11Device> device;
+            D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                              nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, nullptr);
+            WaitForSingleObject(release.get(), 10000);
+        }).detach();
+    }
+    ~GpuPrewarm() { Release(); }
+    GpuPrewarm(const GpuPrewarm&) = delete;
+    GpuPrewarm& operator=(const GpuPrewarm&) = delete;
+
+    void Release() {
+        if (m_release) SetEvent(m_release.get());
+    }
+
+private:
+    std::shared_ptr<void> m_release;
+};
 
 using ViewMode = Pluma::Config::ViewLayout;
 
@@ -218,10 +266,10 @@ public:
         m_preview.ResetScroll();
         if (m_syncScroll) m_syncScroll->Reset();
         m_explorer.SetCurrentFile(m_currentPath);
-        SHAddToRecentDocs(SHARD_PATHW, m_currentPath.c_str());
+        AddToRecentDocsAsync(m_currentPath);
 
         UpdateTitle();
-        TriggerParse();
+        TriggerParse(true);
         UpdateStatusBar();
     }
 
@@ -500,13 +548,14 @@ public:
         SetWindowTextW(m_hwnd, title.c_str());
     }
 
-    void TriggerParse() {
+    // `immediate` skips the typing debounce (a document that was just opened).
+    void TriggerParse(bool immediate = false) {
         m_reparsePosted = false;
         m_statsValid = false;
         if (!m_parseWorker) return;
         m_docVersion++;
         std::string text = m_editor.GetText();
-        m_parseWorker->RequestParse(std::move(text), m_docVersion);
+        m_parseWorker->RequestParse(std::move(text), m_docVersion, immediate);
     }
 
     // Schedules a parse once the current burst of modifications (typing, paste, Replace All)
@@ -2200,6 +2249,7 @@ private:
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPWSTR /*lpCmdLine*/, int nShowCmd) {
+    GpuPrewarm gpuPrewarm; // Before anything else: it runs while the window is built
     // Initialize dark mode support for the process before creating any windows
     Pluma::Platform::InitializeDarkMode();
 
@@ -2229,7 +2279,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPWSTR /*l
     }
 
     MainWindow mainWindow(hInstance);
-    if (!mainWindow.Create(nShowCmd, initialFilePath)) {
+    const bool created = mainWindow.Create(nShowCmd, initialFilePath);
+    gpuPrewarm.Release(); // The window and the preview have painted
+    if (!created) {
         if (appMutex) CloseHandle(appMutex);
         CoUninitialize();
         return 1;

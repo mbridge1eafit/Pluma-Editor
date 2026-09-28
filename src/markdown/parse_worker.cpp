@@ -24,12 +24,15 @@ void ParseWorker::Stop() {
     }
 }
 
-void ParseWorker::RequestParse(std::string markdown, uint64_t version) {
+void ParseWorker::RequestParse(std::string markdown, uint64_t version, bool immediate) {
     AcquireSRWLockExclusive(&m_lock);
     m_pendingText = std::move(markdown);
     m_pendingVersion = version;
     m_hasPending = true;
     m_requestTime = std::chrono::steady_clock::now();
+    if (immediate) {
+        m_requestTime -= m_debounceMs; // Already past the debounce window
+    }
     WakeConditionVariable(&m_cv);
     ReleaseSRWLockExclusive(&m_lock);
 }

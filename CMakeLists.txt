@@ -155,6 +155,7 @@ target_link_libraries(pluma PRIVATE
     comctl32
     uxtheme
     d2d1
+    d3d11
     dwrite
     windowscodecs
     dwmapi
@@ -175,6 +176,7 @@ if(MSVC)
         "/DELAYLOAD:comdlg32.dll"
         "/DELAYLOAD:winhttp.dll"
         "/DELAYLOAD:bcrypt.dll"
+        "/DELAYLOAD:d3d11.dll"
     )
 endif()
 

@@ -210,3 +210,17 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
   - *Editor WYSIWYG en la vista previa:* coste de meses, muchos casos ambiguos (¿escribir tras `**negrita**` va dentro o fuera?) y latencia de tecleo inaceptable con el layout completo actual.
   - *Alinear texto renderizado y fuente por búsqueda de subsecuencias:* no toca el parser, pero falla con la cadena de información de las vallas de código, los emojis y las URL de los enlaces; md4c ya da posiciones exactas.
   - *Devolver solo la línea del bloque:* insuficiente en párrafos largos, que ocupan una sola línea del fuente.
+
+---
+
+## [2026-09-28] Decisión 015: Apertura de documentos por debajo de 200 ms
+
+- **Contexto:** El objetivo es que un `.md` abierto con doble clic se vea renderizado en menos de 200 ms. Se midió desde la creación del proceso hasta que la vista previa pinta el documento, con la configuración real del usuario («Solo vista previa», maximizada, panel de encabezados) y los archivos en la caché del sistema: un documento de 0,7 KB tardaba 333 ms. El desglose mostró tres costes fijos ajenos al tamaño del documento: ~100 ms en crear el primer render target de Direct2D (carga e inicialización del driver de la GPU), 50 ms de debounce antes del primer parseo y ~26 ms de `SHAddToRecentDocs` en el hilo de la interfaz.
+- **Decisión:**
+  - *Primer parseo sin debounce:* `ParseWorker::RequestParse(..., immediate)` salta la espera de 50 ms, pensada para ráfagas de tecleo; `OpenFile` la usa porque un documento recién abierto no es una ráfaga. Las ediciones siguen con debounce.
+  - *«Recientes» fuera del hilo de la interfaz:* `SHAddToRecentDocs` se ejecuta en un hilo del pool del sistema (`TrySubmitThreadpoolCallback`, con su propio `CoInitializeEx`).
+  - *Precalentamiento de la GPU:* `wWinMain` crea al empezar un dispositivo Direct3D 11 en otro hilo (`GpuPrewarm`), en paralelo con la construcción de la ventana; se libera cuando la ventana y la vista previa ya pintaron. El hilo está desacoplado (`detach`): cerrar Pluma nunca lo espera, aunque un driver defectuoso se colgara al crear el dispositivo. `d3d11.dll` se carga en diferido, así que se carga en ese hilo. Coste: un dispositivo Direct3D extra durante ~150 ms (algo de CPU y unos pocos MB), sin ganancia en máquinas sin GPU real (máquinas virtuales, escritorio remoto) ni con uno o dos núcleos.
+  - *Resultado:* documento de 0,7 KB en 197 ms (antes 333), README de 6 KB en 222 ms (antes 358) y 33 KB en 265 ms (antes 400). A partir de ~30 KB el coste dominante es el layout completo de la vista previa en el hilo de la interfaz (383 ms para 122 KB), que se abordará con el layout incremental.
+- **Alternativas descartadas:**
+  - *Pasar la vista previa a `ID2D1DeviceContext` con una cadena de intercambio DXGI sobre un dispositivo creado de antemano:* aprovecharía todo el dispositivo precalentado, pero exige rehacer la gestión del render target; el precalentamiento simple ya recupera ~60 ms.
+  - *Renderizado por software (WARP):* evita el driver, pero dibuja más lento en documentos grandes y con Mermaid.
