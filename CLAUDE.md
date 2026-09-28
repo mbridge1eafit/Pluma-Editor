@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pluma is a fully native Windows Markdown editor (C++20, Win32) designed to launch in under 100 ms and occupy under 3 MB on disk. It has zero embedded-browser dependency (no Chromium, no WebView2, no .NET) — the Markdown preview, including Mermaid diagrams, is rendered with Direct2D/DirectWrite.
 
-Commit messages, code comments, and `docs/DECISIONS.md` are in Spanish; this file and code identifiers are in English/Spanish mixed with the existing codebase conventions — match the surrounding file's language when editing.
+Commit messages are in English and follow Conventional Commits (e.g. `feat(preview): ...`, `fix(ui): ...`, `chore(release): bump version to X.Y.Z`) — `scripts/generate_release_notes.ps1` groups them by type. Code comments and identifiers are in English; `docs/DECISIONS.md` and the user-facing texts (UI strings, README, release notes) are in Spanish — match the surrounding file's language when editing.
 
 ## Build commands
 
