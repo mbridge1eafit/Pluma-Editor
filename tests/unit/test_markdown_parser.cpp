@@ -286,6 +286,25 @@ private:
 
 } // namespace
 
+TEST(ParseWorkerTest, ImmediateRequestSkipsDebounce) {
+    MessageReceiverWindow receiver;
+    ASSERT_NE(receiver.GetHwnd(), nullptr);
+
+    // A debounce far longer than the wait: only an immediate request can arrive in time.
+    ParseWorker worker(receiver.GetHwnd(), WM_USER_PARSE_COMPLETE, std::chrono::milliseconds(5000));
+    worker.RequestParse("# Opened document", 7, true);
+
+    uint64_t deliveredVersion = 0;
+    std::unique_ptr<BlockTree> deliveredTree;
+    ASSERT_TRUE(receiver.WaitForMessage(std::chrono::milliseconds(1000), deliveredVersion, deliveredTree));
+    EXPECT_EQ(deliveredVersion, 7u);
+
+    // Typing afterwards is debounced again.
+    worker.RequestParse("# Opened document edited", 8);
+    EXPECT_FALSE(receiver.WaitForMessage(std::chrono::milliseconds(300), deliveredVersion, deliveredTree));
+    worker.Stop();
+}
+
 TEST(ParseWorkerTest, AsyncDeliverySingleSnapshot) {
     MessageReceiverWindow receiver;
     ASSERT_NE(receiver.GetHwnd(), nullptr);

@@ -23,8 +23,9 @@ public:
     ParseWorker(const ParseWorker&) = delete;
     ParseWorker& operator=(const ParseWorker&) = delete;
 
-    // Requests asynchronous background parsing of a snapshot with debounce (F-08)
-    void RequestParse(std::string markdown, uint64_t version);
+    // Requests asynchronous background parsing of a snapshot with debounce (F-08).
+    // `immediate` skips the debounce: a freshly opened document is not a burst of typing.
+    void RequestParse(std::string markdown, uint64_t version, bool immediate = false);
 
     // Stops background worker thread
     void Stop();
