@@ -424,3 +424,50 @@ TEST_F(EditorViewTest, InsertImageAndDiagram) {
     EXPECT_TRUE(text.starts_with("```mermaid\npie"));
     EXPECT_TRUE(text.ends_with("\n```"));
 }
+
+TEST_F(EditorViewTest, GotoSourcePositionCountsUtf16Units) {
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1101, 0, 0, 800, 600));
+    // "# x\n" + "ñandú más 🚀 fin\n"
+    editor.SetText("# x\n\xC3\xB1" "and\xC3\xBA m\xC3\xA1s \xF0\x9F\x9A\x80 fin\n");
+
+    editor.GotoSourcePosition(4, 5); // After "ñandú"
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), 4 + 7);
+
+    editor.GotoSourcePosition(4, 12); // After the rocket (a surrogate pair)
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), 4 + 7 + 5 + 5);
+
+    editor.GotoSourcePosition(2, 0);
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), 2);
+
+    const auto length = editor.Call(SCI_GETLENGTH);
+    editor.GotoSourcePosition(100000, 3); // Stale offsets are clamped
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), length);
+}
+
+TEST_F(EditorViewTest, SetTaskMarkIsOneUndoableEdit) {
+    Pluma::Editor::EditorView editor;
+    ASSERT_TRUE(editor.Create(m_parentHwnd, m_hInstance, 1102, 0, 0, 800, 600));
+    editor.SetText("- [ ] uno\n- [X] dos\n");
+    editor.Call(SCI_GOTOPOS, 8);
+
+    EXPECT_TRUE(editor.SetTaskMark(3, true));
+    EXPECT_EQ(editor.GetText(), "- [x] uno\n- [X] dos\n");
+    EXPECT_EQ(editor.Call(SCI_GETCURRENTPOS), 8); // Caret untouched
+    EXPECT_TRUE(editor.SetTaskMark(13, false));
+    EXPECT_EQ(editor.GetText(), "- [x] uno\n- [ ] dos\n");
+    EXPECT_TRUE(editor.SetTaskMark(3, true)); // Already checked: no change
+    EXPECT_EQ(editor.GetText(), "- [x] uno\n- [ ] dos\n");
+
+    editor.Undo();
+    EXPECT_EQ(editor.GetText(), "- [x] uno\n- [X] dos\n");
+    editor.Undo();
+    EXPECT_EQ(editor.GetText(), "- [ ] uno\n- [X] dos\n");
+
+    // Offsets that do not point at a task mark change nothing.
+    EXPECT_FALSE(editor.SetTaskMark(2, true));
+    EXPECT_FALSE(editor.SetTaskMark(0, true));
+    EXPECT_FALSE(editor.SetTaskMark(7, true));
+    EXPECT_FALSE(editor.SetTaskMark(500, true));
+    EXPECT_EQ(editor.GetText(), "- [ ] uno\n- [X] dos\n");
+}

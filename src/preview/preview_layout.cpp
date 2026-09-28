@@ -3,7 +3,9 @@
 #include <dwrite_1.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
+#include <iterator>
 
 #include "../diagram/mermaid.h"
 
@@ -45,6 +47,73 @@ std::wstring Utf8ToUtf16(std::string_view utf8) {
     return utf16;
 }
 
+void AppendUtf16(std::wstring& out, std::string_view utf8) {
+    if (utf8.empty()) return;
+    const int count = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+    if (count <= 0) return;
+    const size_t start = out.size();
+    out.resize(start + static_cast<size_t>(count));
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), out.data() + start, count);
+}
+
+// Appends a text/code span, recording which parts of it are verbatim copies of the source.
+void AppendSpanText(const Markdown::Span& span, std::wstring& outText, std::vector<SourceSegment>& outSource) {
+    const std::string_view text = span.text;
+    size_t pos = 0;
+    for (const auto& run : span.source) {
+        const size_t end = static_cast<size_t>(run.textOffset) + run.length;
+        if (run.textOffset < pos || end > text.size()) continue; // Runs are ordered and in range
+        AppendUtf16(outText, text.substr(pos, run.textOffset - pos));
+        const auto start = static_cast<UINT32>(outText.size());
+        AppendUtf16(outText, text.substr(run.textOffset, run.length));
+        outSource.push_back(SourceSegment{start, static_cast<UINT32>(outText.size()) - start, run.srcOffset});
+        pos = end;
+    }
+    AppendUtf16(outText, text.substr(pos));
+}
+
+// Text position under (x, y) of a layout drawn at `origin`; `trailing` when the point is past
+// the middle of the character.
+UINT32 HitTestTextLayout(IDWriteTextLayout* layout, D2D1_POINT_2F origin, float x, float y, bool& trailing) {
+    BOOL isTrailing = FALSE;
+    BOOL isInside = FALSE;
+    DWRITE_HIT_TEST_METRICS m{};
+    if (FAILED(layout->HitTestPoint(x - origin.x, y - origin.y, &isTrailing, &isInside, &m))) {
+        trailing = false;
+        return 0;
+    }
+    trailing = isTrailing != FALSE;
+    return m.textPosition + (trailing ? m.length : 0);
+}
+
+// Maps a text position to the source through a source map; false when there is no verbatim text.
+bool ResolveSource(const std::vector<SourceSegment>& map, UINT32 pos, bool trailing, SourceHit& hit) {
+    if (map.empty()) return false;
+    // First segment ending at or after pos.
+    auto it = std::lower_bound(map.begin(), map.end(), pos, [](const SourceSegment& s, UINT32 p) {
+        return s.textStart + s.textLength < p;
+    });
+    // Between two adjacent segments ("**a**b"): a leading-edge hit belongs to the next one.
+    if (!trailing && it != map.end() && it->textStart + it->textLength == pos && std::next(it) != map.end() &&
+        std::next(it)->textStart == pos) {
+        ++it;
+    }
+    if (it != map.end() && it->textStart <= pos) {
+        hit.srcOffset = it->srcOffset;
+        hit.utf16Delta = pos - it->textStart;
+    } else if (it != map.begin()) {
+        // Generated text (entity, emoji, soft break): right after the previous verbatim segment.
+        const SourceSegment& prev = *std::prev(it);
+        hit.srcOffset = prev.srcOffset;
+        hit.utf16Delta = prev.textLength;
+    } else {
+        hit.srcOffset = it->srcOffset; // Before the first verbatim segment
+        hit.utf16Delta = 0;
+    }
+    hit.exact = true;
+    return true;
+}
+
 enum StyleFlag : unsigned {
     kStyleNone = 0,
     kStyleBold = 1u << 0,
@@ -77,6 +146,7 @@ struct LayoutEngine::RichText {
     ComPtr<IDWriteTextLayout> layout;
     std::vector<SpanRange> ranges;
     std::vector<EffectRange> effects;
+    std::vector<SourceSegment> sourceMap;
     float codeFontSize = 12.0f;
     float lineHeight = 20.0f;
     float baseline = 16.0f;
@@ -84,10 +154,10 @@ struct LayoutEngine::RichText {
 
 namespace {
 
-// Flattens a span tree into UTF-16 text plus styled leaf ranges.
+// Flattens a span tree into UTF-16 text plus styled leaf ranges and its source map.
 template <typename Range>
 void FlattenSpans(const std::vector<Markdown::Span>& spans, unsigned style, const std::string& url,
-                  std::wstring& outText, std::vector<Range>& outRanges) {
+                  std::wstring& outText, std::vector<Range>& outRanges, std::vector<SourceSegment>& outSource) {
     for (const auto& span : spans) {
         unsigned spanStyle = style;
         const std::string* spanUrl = &url;
@@ -109,20 +179,22 @@ void FlattenSpans(const std::vector<Markdown::Span>& spans, unsigned style, cons
             break;
         }
 
-        auto appendLeaf = [&](std::wstring_view w) {
-            if (w.empty()) return;
-            const auto start = static_cast<UINT32>(outText.size());
-            outText.append(w);
-            if (spanStyle != kStyleNone) {
-                outRanges.push_back(Range{start, static_cast<UINT32>(w.size()), spanStyle, *spanUrl});
+        // Styles the text appended since `start` as one leaf range.
+        auto markLeaf = [&](size_t start) {
+            if (spanStyle != kStyleNone && outText.size() > start) {
+                outRanges.push_back(Range{static_cast<UINT32>(start), static_cast<UINT32>(outText.size() - start),
+                                          spanStyle, *spanUrl});
             }
         };
 
         switch (span.type) {
         case Markdown::SpanType::Text:
-        case Markdown::SpanType::Code:
-            appendLeaf(Utf8ToUtf16(span.text));
+        case Markdown::SpanType::Code: {
+            const size_t start = outText.size();
+            AppendSpanText(span, outText, outSource);
+            markLeaf(start);
             break;
+        }
         case Markdown::SpanType::LineBreak:
             outText.push_back(L'\x2028'); // Line separator: new line inside the same paragraph
             break;
@@ -131,7 +203,9 @@ void FlattenSpans(const std::vector<Markdown::Span>& spans, unsigned style, cons
             std::wstring label = L"\U0001F5BC️ ";
             std::wstring alt = Utf8ToUtf16(Markdown::ExtractPlainText(span.children));
             label += alt.empty() ? std::wstring(FileNameOf(Utf8ToUtf16(span.url))) : alt;
-            appendLeaf(label);
+            const size_t start = outText.size();
+            outText.append(label);
+            markLeaf(start);
             continue; // Alt text already emitted
         }
         default:
@@ -139,7 +213,7 @@ void FlattenSpans(const std::vector<Markdown::Span>& spans, unsigned style, cons
         }
 
         if (!span.children.empty()) {
-            FlattenSpans(span.children, spanStyle, *spanUrl, outText, outRanges);
+            FlattenSpans(span.children, spanStyle, *spanUrl, outText, outRanges, outSource);
         }
     }
 }
@@ -306,7 +380,7 @@ LayoutEngine::RichText LayoutEngine::BuildRichText(const std::vector<Markdown::S
     rich.codeFontSize = std::round(style.fontSize * 0.88f * 2.0f) / 2.0f;
 
     std::wstring text;
-    FlattenSpans(spans, kStyleNone, std::string(), text, rich.ranges);
+    FlattenSpans(spans, kStyleNone, std::string(), text, rich.ranges, rich.sourceMap);
 
     rich.layout = CreatePlainLayout(text, style, (std::max)(kMinTextWidth, maxWidth));
     if (!rich.layout) {
@@ -519,6 +593,7 @@ void LayoutEngine::LayoutHeading(const Markdown::Block& block, const Context& ct
     CollectDecorations(rich, lb.textOrigin, lb.links, lb.inlineCodePills);
     lb.textLayout = std::move(rich.layout);
     lb.effects = std::move(rich.effects);
+    lb.sourceMap = std::move(rich.sourceMap);
     m_blocks.push_back(std::move(lb));
 
     currentY += height;
@@ -544,6 +619,7 @@ void LayoutEngine::LayoutParagraph(const Markdown::Block& block, const Context& 
     CollectDecorations(rich, lb.textOrigin, lb.links, lb.inlineCodePills);
     lb.textLayout = std::move(rich.layout);
     lb.effects = std::move(rich.effects);
+    lb.sourceMap = std::move(rich.sourceMap);
     m_blocks.push_back(std::move(lb));
 
     currentY += height;
@@ -620,6 +696,7 @@ void LayoutEngine::LayoutListItem(const Markdown::Block& block, const Context& c
     lb.itemNumber = number;
     lb.isTask = block.isTask;
     lb.isTaskChecked = block.isTaskChecked;
+    lb.taskMarkOffset = block.taskMarkOffset;
     lb.listDepth = ctx.listDepth;
     lb.quoteDepth = ctx.quoteDepth;
     lb.startLine = block.startLine;
@@ -657,6 +734,7 @@ void LayoutEngine::LayoutListItem(const Markdown::Block& block, const Context& c
     CollectDecorations(rich, lb.textOrigin, lb.links, lb.inlineCodePills);
     lb.textLayout = std::move(rich.layout);
     lb.effects = std::move(rich.effects);
+    lb.sourceMap = std::move(rich.sourceMap);
     m_blocks.push_back(std::move(lb));
     currentY += height;
 
@@ -686,11 +764,11 @@ void LayoutEngine::LayoutCodeBlock(const Markdown::Block& block, const Context& 
     lb.startLine = block.startLine;
     lb.endLine = block.endLine;
 
+    std::wstring code;
     for (const auto& s : block.inlineContent) {
         lb.codeText.append(s.text);
+        AppendSpanText(s, code, lb.sourceMap);
     }
-
-    std::wstring code = Utf8ToUtf16(lb.codeText);
     while (!code.empty() && (code.back() == L'\n' || code.back() == L'\r')) {
         code.pop_back();
     }
@@ -1005,6 +1083,7 @@ void LayoutEngine::LayoutTable(const Markdown::Block& block, const Context& ctx,
                 CollectDecorations(info.rich, cell.textOrigin, lb.links, lb.inlineCodePills);
                 cell.textLayout = std::move(info.rich.layout);
                 cell.effects = std::move(info.rich.effects);
+                cell.sourceMap = std::move(info.rich.sourceMap);
             }
             cellX += lb.tableColWidths[c] + 1.0f;
         }
@@ -1044,6 +1123,81 @@ const LinkHitBox* LayoutEngine::HitTestLinkBox(float x, float y) const {
 std::string LayoutEngine::HitTestLink(float x, float y) const {
     const LinkHitBox* box = HitTestLinkBox(x, y);
     return box ? box->url : std::string();
+}
+
+SourceHit LayoutEngine::HitTestSource(float x, float y) const {
+    SourceHit hit;
+
+    // Block under the point, or the nearest one vertically (m_syncBlocks skips quote bars).
+    const LayoutBlock* block = nullptr;
+    float bestDistance = FLT_MAX;
+    for (const size_t index : m_syncBlocks) {
+        const LayoutBlock& b = m_blocks[index];
+        const float distance = y < b.bounds.top ? b.bounds.top - y : (y > b.bounds.bottom ? y - b.bounds.bottom : 0.0f);
+        if (distance < bestDistance) {
+            block = &b;
+            bestDistance = distance;
+            if (distance == 0.0f) break;
+        }
+    }
+    if (!block) return hit;
+    hit.line = block->startLine;
+
+    bool trailing = false;
+    if (block->type == Markdown::BlockType::Table && !block->tableRows.empty()) {
+        // Row under the point (clamped), then the cell under it (clamped).
+        size_t r = 0;
+        while (r + 1 < block->tableRows.size() &&
+               (block->tableRows[r].empty() || y > block->tableRows[r].front().rect.bottom)) {
+            ++r;
+        }
+        const auto& row = block->tableRows[r];
+        if (row.empty()) return hit;
+        size_t c = 0;
+        while (c + 1 < row.size() && x > row[c].rect.right) {
+            ++c;
+        }
+        // GFM rows are single source lines, with the delimiter row after the header.
+        const int headerRows = block->tableHeaderRows;
+        hit.line = block->startLine + static_cast<int>(r) + (static_cast<int>(r) >= headerRows ? 1 : 0);
+        const TableCellLayout& cell = row[c];
+        if (cell.textLayout) {
+            const UINT32 pos = HitTestTextLayout(cell.textLayout.Get(), cell.textOrigin, x, y, trailing);
+            ResolveSource(cell.sourceMap, pos, trailing, hit);
+        }
+        return hit;
+    }
+
+    if (block->diagram) {
+        hit.line = (std::min)(block->startLine + 1, block->endLine); // Inside the fence
+        return hit;
+    }
+    if (block->textLayout) {
+        const UINT32 pos = HitTestTextLayout(block->textLayout.Get(), block->textOrigin, x, y, trailing);
+        ResolveSource(block->sourceMap, pos, trailing, hit);
+    }
+    return hit;
+}
+
+const LayoutBlock* LayoutEngine::HitTestTaskBox(float x, float y) const {
+    constexpr float kSlop = 3.0f; // Small boxes: accept clicks slightly outside them
+    for (const auto& b : m_blocks) {
+        if (!b.isTask || b.taskMarkOffset < 0 || y < b.bounds.top - kSlop || y > b.bounds.bottom + kSlop) continue;
+        const D2D1_RECT_F& m = b.markerRect;
+        if (x >= m.left - kSlop && x <= m.right + kSlop && y >= m.top - kSlop && y <= m.bottom + kSlop) {
+            return &b;
+        }
+    }
+    return nullptr;
+}
+
+void LayoutEngine::SetTaskChecked(int taskMarkOffset, bool checked) {
+    for (auto& b : m_blocks) {
+        if (b.isTask && b.taskMarkOffset == taskMarkOffset) {
+            b.isTaskChecked = checked;
+            return;
+        }
+    }
 }
 
 float LayoutEngine::GetAnchorY(std::string_view slug) const {

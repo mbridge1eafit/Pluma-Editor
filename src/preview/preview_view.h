@@ -57,6 +57,17 @@ public:
         m_onOpenDocument = std::move(callback);
     }
 
+    // Invoked on a double-click outside links: the source position to edit.
+    void SetOnSourceNavigateCallback(std::function<void(const SourceHit&)> callback) {
+        m_onSourceNavigate = std::move(callback);
+    }
+
+    // Invoked when a task checkbox is clicked, with the version of the displayed tree. Returns true
+    // when the document was changed, so the checkbox can be redrawn before the re-parse arrives.
+    void SetOnToggleTaskCallback(std::function<bool(uint64_t treeVersion, int taskMarkOffset, bool checked)> callback) {
+        m_onToggleTask = std::move(callback);
+    }
+
     void OnResize(int width, int height);
 
 private:
@@ -71,6 +82,7 @@ private:
     void ScrollTo(float newPos, bool notify = true);
     void UpdateHover(float xDip, float yDip);
     void SetHoverLink(const LinkHitBox* link);
+    void ToggleTask(int taskMarkOffset);
     void OpenLink(const std::string& url);
 
     float PxToDip(float px) const noexcept { return px * 96.0f / static_cast<float>(m_dpi); }
@@ -104,11 +116,15 @@ private:
     const LinkHitBox* m_hoverLink = nullptr;
     std::string m_hoverUrl;
     std::string m_pressedUrl;
+    const LayoutBlock* m_hoverTask = nullptr;
+    int m_pressedTaskOffset = -1;
     bool m_trackingMouse = false;
     HCURSOR m_hHandCursor = nullptr;
     HCURSOR m_hArrowCursor = nullptr;
     std::function<void(int line)> m_onScrollCallback;
     std::function<void(const std::filesystem::path&)> m_onOpenDocument;
+    std::function<void(const SourceHit&)> m_onSourceNavigate;
+    std::function<bool(uint64_t, int, bool)> m_onToggleTask;
 };
 
 } // namespace Pluma::Preview

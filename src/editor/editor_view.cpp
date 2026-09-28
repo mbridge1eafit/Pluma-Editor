@@ -326,6 +326,19 @@ void EditorView::GotoLine(int line) {
     Call(SCI_ENSUREVISIBLE, line - 1);
 }
 
+void EditorView::GotoSourcePosition(size_t byteOffset, size_t utf16Units) {
+    const sptr_t length = Call(SCI_GETLENGTH);
+    sptr_t pos = (std::min)(static_cast<sptr_t>(byteOffset), length);
+    if (utf16Units > 0) {
+        // Returns 0 when the move would leave the document.
+        const sptr_t moved = Call(SCI_POSITIONRELATIVECODEUNITS, pos, static_cast<sptr_t>(utf16Units));
+        pos = moved > 0 ? moved : length;
+    }
+    Call(SCI_ENSUREVISIBLE, Call(SCI_LINEFROMPOSITION, pos));
+    Call(SCI_GOTOPOS, pos);
+    Call(SCI_CHOOSECARETX);
+}
+
 int EditorView::GetFirstVisibleDocLine() const {
     sptr_t visibleLine = Call(SCI_GETFIRSTVISIBLELINE, 0, 0);
     sptr_t docLine = Call(SCI_DOCLINEFROMVISIBLE, visibleLine, 0);
@@ -452,6 +465,24 @@ bool EditorView::SelectionMatches(std::string_view text, bool matchCase) const {
     const std::wstring a = toWide(selected);
     const std::wstring b = toWide(text);
     return CompareStringOrdinal(a.c_str(), static_cast<int>(a.size()), b.c_str(), static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;
+}
+
+bool EditorView::SetTaskMark(size_t markOffset, bool checked) {
+    const sptr_t pos = static_cast<sptr_t>(markOffset);
+    if (pos < 1 || pos + 1 >= Call(SCI_GETLENGTH)) {
+        return false;
+    }
+    const auto mark = static_cast<char>(Call(SCI_GETCHARAT, pos));
+    if (Call(SCI_GETCHARAT, pos - 1) != '[' || Call(SCI_GETCHARAT, pos + 1) != ']' ||
+        (mark != ' ' && mark != 'x' && mark != 'X')) {
+        return false;
+    }
+    if ((mark != ' ') != checked) {
+        // The target API leaves the caret and selection alone.
+        Call(SCI_SETTARGETRANGE, pos, pos + 1);
+        Call(SCI_REPLACETARGET, 1, reinterpret_cast<sptr_t>(checked ? "x" : " "));
+    }
+    return true;
 }
 
 void EditorView::ApplyTheme(bool darkMode) {

@@ -216,18 +216,44 @@ LRESULT PreviewView::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_SETCURSOR:
         if (LOWORD(lParam) == HTCLIENT) {
-            SetCursor(m_hoverLink ? m_hHandCursor : m_hArrowCursor);
+            SetCursor(m_hoverLink || m_hoverTask ? m_hHandCursor : m_hArrowCursor);
             return TRUE;
         }
         break;
 
     case WM_LBUTTONDOWN:
         SetFocus(m_hwnd);
+        // A click can arrive without a previous WM_MOUSEMOVE (pen, touch, inactive window).
+        UpdateHover(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
+                    PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))));
         m_pressedUrl = m_hoverUrl;
+        m_pressedTaskOffset = m_hoverTask ? m_hoverTask->taskMarkOffset : -1;
+        return 0;
+
+    case WM_LBUTTONDBLCLK:
+        UpdateHover(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
+                    PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))));
+        // The second click of a double-click on a checkbox toggles it again, like a single click.
+        if (m_hoverTask) {
+            m_pressedTaskOffset = m_hoverTask->taskMarkOffset;
+            return 0;
+        }
+        if (!m_hoverLink && m_tree && m_onSourceNavigate) {
+            m_onSourceNavigate(m_layout.HitTestSource(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
+                                                      PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))) + m_scrollPos));
+        }
         return 0;
 
     case WM_LBUTTONUP: {
-        // Only follow a link when press and release happen on the same link.
+        UpdateHover(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
+                    PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))));
+        // Only follow a link (or toggle a checkbox) when press and release happen on it.
+        const int taskOffset = m_pressedTaskOffset;
+        m_pressedTaskOffset = -1;
+        if (taskOffset >= 0 && m_hoverTask && m_hoverTask->taskMarkOffset == taskOffset) {
+            ToggleTask(taskOffset);
+            return 0;
+        }
         std::string url;
         url.swap(m_pressedUrl);
         if (!url.empty() && url == m_hoverUrl) {
@@ -308,6 +334,8 @@ void PreviewView::Relayout() {
     m_hoverLink = nullptr;
     m_hoverUrl.clear();
     m_pressedUrl.clear();
+    m_hoverTask = nullptr;
+    m_pressedTaskOffset = -1;
 
     if (m_tree) {
         m_layoutWidthDip = PxToDip(static_cast<float>(m_clientWidthPx));
@@ -416,7 +444,22 @@ void PreviewView::ResetScroll() {
 }
 
 void PreviewView::UpdateHover(float xDip, float yDip) {
+    const LayoutBlock* task = m_onToggleTask ? m_layout.HitTestTaskBox(xDip, yDip + m_scrollPos) : nullptr;
+    if (task != m_hoverTask) {
+        m_hoverTask = task;
+        SetCursor(task || m_hoverLink ? m_hHandCursor : m_hArrowCursor);
+    }
     SetHoverLink(m_layout.HitTestLinkBox(xDip, yDip + m_scrollPos));
+}
+
+void PreviewView::ToggleTask(int taskMarkOffset) {
+    const LayoutBlock* task = m_hoverTask;
+    if (!task || !m_tree || !m_onToggleTask) return;
+    const bool checked = !task->isTaskChecked;
+    if (m_onToggleTask(m_tree->version, taskMarkOffset, checked)) {
+        m_layout.SetTaskChecked(taskMarkOffset, checked);
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
 }
 
 void PreviewView::SetHoverLink(const LinkHitBox* link) {
@@ -442,7 +485,7 @@ void PreviewView::SetHoverLink(const LinkHitBox* link) {
 
     m_hoverLink = link;
     m_hoverUrl = link ? link->url : std::string();
-    SetCursor(link ? m_hHandCursor : m_hArrowCursor);
+    SetCursor(link || m_hoverTask ? m_hHandCursor : m_hArrowCursor);
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 

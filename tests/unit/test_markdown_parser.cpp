@@ -439,3 +439,109 @@ TEST(Md4cAdapterTest, LinkDestinationEntitiesDecoded) {
     ASSERT_EQ(link.type, SpanType::Link);
     EXPECT_EQ(link.url, "https://x.com/?a=1&b=2");
 }
+
+// ==============================================================================
+// Source runs (preview -> source mapping)
+// ==============================================================================
+
+namespace {
+
+// Every source run must be a verbatim, ordered, in-range copy of the source.
+void ExpectRunsVerbatim(const std::vector<Span>& spans, std::string_view md, size_t& runCount) {
+    for (const auto& span : spans) {
+        uint32_t lastEnd = 0;
+        for (const auto& run : span.source) {
+            EXPECT_GE(run.textOffset, lastEnd);
+            ASSERT_LE(static_cast<size_t>(run.textOffset) + run.length, span.text.size());
+            ASSERT_LE(static_cast<size_t>(run.srcOffset) + run.length, md.size());
+            EXPECT_EQ(std::string_view(span.text).substr(run.textOffset, run.length),
+                      md.substr(run.srcOffset, run.length));
+            lastEnd = run.textOffset + run.length;
+            ++runCount;
+        }
+        ExpectRunsVerbatim(span.children, md, runCount);
+    }
+}
+
+void ExpectBlockRunsVerbatim(const Block& block, std::string_view md, size_t& runCount) {
+    ExpectRunsVerbatim(block.inlineContent, md, runCount);
+    for (const auto& child : block.children) {
+        if (child) ExpectBlockRunsVerbatim(*child, md, runCount);
+    }
+}
+
+// Source offset of `utf8` inside the text of a span tree, through its runs (npos if unmapped).
+size_t SourceOffsetOf(const std::vector<Span>& spans, std::string_view needle) {
+    for (const auto& span : spans) {
+        const size_t at = span.text.find(needle);
+        if (at != std::string::npos) {
+            for (const auto& run : span.source) {
+                if (at >= run.textOffset && at < static_cast<size_t>(run.textOffset) + run.length) {
+                    return run.srcOffset + (at - run.textOffset);
+                }
+            }
+        }
+        const size_t nested = SourceOffsetOf(span.children, needle);
+        if (nested != std::string::npos) return nested;
+    }
+    return std::string::npos;
+}
+
+} // namespace
+
+TEST(Md4cAdapterTest, SourceRunsAreVerbatimCopies) {
+    const std::string md =
+        "# Título con *énfasis*\n\n"
+        "Párrafo con **negrita**, `código`, [enlace](https://x.com) y &amp; entidad.\n"
+        "Segunda línea :rocket: con emoji y ~~tachado~~.\n\n"
+        "> Cita con **texto**\n> en dos líneas\n\n"
+        "- [ ] tarea *pendiente*\n- [x] tarea hecha\n  1. anidada\n\n"
+        "| Col A | Col B |\n|:--|--:|\n| celda `x` | ñandú |\n\n"
+        "```cpp\nint main() {\n    return 0; // ñ\n}\n```\n\n"
+        "    indentado\n    código\n\n"
+        "<div>html <b>crudo</b> &copy;</div>\n";
+    auto tree = Md4cAdapter::Parse(md);
+    size_t runCount = 0;
+    ExpectBlockRunsVerbatim(*tree->root, md, runCount);
+    EXPECT_GT(runCount, 20u);
+}
+
+TEST(Md4cAdapterTest, SourceRunsLocateTextAcrossMarkup) {
+    const std::string md = "Hola **mundo** &amp; :rocket: fin\ncon *salto*\n";
+    auto tree = Md4cAdapter::Parse(md);
+    const auto& spans = tree->root->children[0]->inlineContent;
+    EXPECT_EQ(SourceOffsetOf(spans, "Hola"), 0u);
+    EXPECT_EQ(SourceOffsetOf(spans, "mundo"), md.find("mundo"));
+    // Text after an entity and an emoji keeps its real position.
+    EXPECT_EQ(SourceOffsetOf(spans, "fin"), md.find("fin"));
+    EXPECT_EQ(SourceOffsetOf(spans, "con"), md.find("con"));
+    EXPECT_EQ(SourceOffsetOf(spans, "salto"), md.find("salto"));
+    // Generated text has no source position.
+    EXPECT_EQ(SourceOffsetOf(spans, "&"), std::string::npos);
+    EXPECT_EQ(SourceOffsetOf(spans, "🚀"), std::string::npos);
+}
+
+TEST(Md4cAdapterTest, CodeBlockRunsSkipLineEnds) {
+    const std::string md = "> ```\n> uno\n> dos\n> ```\n";
+    auto tree = Md4cAdapter::Parse(md);
+    const auto& code = *tree->root->children[0]->children[0];
+    ASSERT_EQ(code.type, BlockType::CodeBlock);
+    EXPECT_EQ(SourceOffsetOf(code.inlineContent, "uno"), md.find("uno"));
+    EXPECT_EQ(SourceOffsetOf(code.inlineContent, "dos"), md.find("dos"));
+}
+
+TEST(Md4cAdapterTest, TaskMarkOffsets) {
+    const std::string md = "- [ ] uno\n- [x] dos\n\n> 1. [X] tres\n\n- normal\n";
+    auto tree = Md4cAdapter::Parse(md);
+    const auto& list = *tree->root->children[0];
+    ASSERT_EQ(list.children.size(), 2u);
+    EXPECT_EQ(list.children[0]->taskMarkOffset, 3);
+    EXPECT_EQ(md[3], ' ');
+    EXPECT_EQ(md[static_cast<size_t>(list.children[1]->taskMarkOffset)], 'x');
+
+    const auto& quoted = *tree->root->children[1]->children[0]->children[0];
+    ASSERT_TRUE(quoted.isTask);
+    EXPECT_EQ(static_cast<size_t>(quoted.taskMarkOffset), md.find('X'));
+
+    EXPECT_EQ(tree->root->children[2]->children[0]->taskMarkOffset, -1);
+}
