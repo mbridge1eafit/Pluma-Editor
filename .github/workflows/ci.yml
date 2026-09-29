@@ -64,6 +64,12 @@ jobs:
         run: |
           .\scripts\package_release.ps1 -RequireInstaller
 
+      # Validates packaging/msix/AppxManifest.xml (makeappx checks it against the schema) and the icons.
+      - name: Build MSIX Package
+        shell: pwsh
+        run: |
+          .\scripts\package_msix.ps1
+
       - name: Configure ASan Preset
         run: cmake --preset asan
 
