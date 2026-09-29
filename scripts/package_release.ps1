@@ -8,12 +8,16 @@
     El actualizador integrado en Pluma descarga el instalador y lo verifica con SHA256SUMS.txt.
 .PARAMETER RequireInstaller
     Falla si Inno Setup (ISCC.exe) no está disponible, en lugar de publicar solo el ZIP. Lo usa CI.
+.PARAMETER ChecksumsOnly
+    Solo regenera dist\SHA256SUMS.txt a partir de lo que ya hay en dist\. Lo usa CI tras firmar el instalador
+    con SignPath (la firma cambia su hash): el paquete se genera primero, se firma y después se calculan los hashes.
 #>
 
 [CmdletBinding()]
 param(
     [string]$Version = "",
-    [switch]$RequireInstaller
+    [switch]$RequireInstaller,
+    [switch]$ChecksumsOnly
 )
 
 # Inno Setup: PATH, instalación para todos los usuarios o por usuario (winget --scope user).
@@ -72,6 +76,33 @@ $setupName = "pluma-$Version-setup-x64.exe"
 $setupFile = Join-Path $distDir $setupName
 $checksumFile = Join-Path $distDir "SHA256SUMS.txt"
 
+function Write-Checksums {
+    # Generar Checksum SHA-256
+    Write-Host "--> Calculando Checksum SHA-256..." -ForegroundColor Gray
+    $zipHash = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash.ToLower()
+    $exeHash = (Get-FileHash -Path $exePath -Algorithm SHA256).Hash.ToLower()
+
+    $checksumLines = @(
+        "$zipHash  $([System.IO.Path]::GetFileName($zipFile))"
+    )
+    if (Test-Path $setupFile) {
+        $setupHash = (Get-FileHash -Path $setupFile -Algorithm SHA256).Hash.ToLower()
+        $checksumLines += "$setupHash  $setupName"
+    }
+    $checksumLines += "$exeHash  pluma.exe"
+    # UTF-8 sin BOM (PowerShell 5.1 añade BOM con -Encoding utf8)
+    [System.IO.File]::WriteAllText($checksumFile, (($checksumLines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+}
+
+if ($ChecksumsOnly) {
+    foreach ($f in @($zipFile, $setupFile)) {
+        if (-not (Test-Path $f)) { Write-Error "Falta ${f}: genere primero el paquete con package_release.ps1."; exit 1 }
+    }
+    Write-Checksums
+    Get-Content $checksumFile
+    exit 0
+}
+
 Write-Host "==> Preparando paquete de distribución para Pluma $Version..." -ForegroundColor Cyan
 
 # Limpiar directorio previo de preparación
@@ -114,21 +145,8 @@ if ($iscc) {
     Write-Warning "No se encontró Inno Setup 6 (ISCC.exe): se omite el instalador. Instálelo con: winget install --id JRSoftware.InnoSetup -e"
 }
 
-# Generar Checksum SHA-256
-Write-Host "--> Calculando Checksum SHA-256..." -ForegroundColor Gray
-$zipHash = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash.ToLower()
-$exeHash = (Get-FileHash -Path $exePath -Algorithm SHA256).Hash.ToLower()
 
-$checksumLines = @(
-    "$zipHash  $([System.IO.Path]::GetFileName($zipFile))"
-)
-if (Test-Path $setupFile) {
-    $setupHash = (Get-FileHash -Path $setupFile -Algorithm SHA256).Hash.ToLower()
-    $checksumLines += "$setupHash  $setupName"
-}
-$checksumLines += "$exeHash  pluma.exe"
-# UTF-8 sin BOM (PowerShell 5.1 añade BOM con -Encoding utf8)
-[System.IO.File]::WriteAllText($checksumFile, (($checksumLines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+Write-Checksums
 
 Write-Host ""
 Write-Host "[OK] Paquete generado exitosamente en: $distDir" -ForegroundColor Green
