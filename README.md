@@ -28,6 +28,21 @@ Compara el hash del archivo descargado con el publicado en `SHA256SUMS.txt`:
 Get-FileHash .\pluma-*-setup-x64.exe -Algorithm SHA256
 ```
 
+## Política de firma de código (Code signing policy)
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+> La solicitud a SignPath Foundation está en trámite: las versiones publicadas hasta ahora aún no están firmadas.
+
+Los binarios firmados (`pluma.exe` y el instalador) se compilan exclusivamente en GitHub Actions a partir del código fuente de este repositorio, y cada firma requiere aprobación manual.
+
+**Roles del equipo:**
+
+- Autores y revisores (*Committers and reviewers*): [mbridge1eafit](https://github.com/mbridge1eafit)
+- Aprobadores (*Approvers*): [mbridge1eafit](https://github.com/mbridge1eafit)
+
+**Privacidad:** Pluma no recopila datos personales ni telemetría. La única conexión de red es la comprobación de actualizaciones contra la API pública de GitHub Releases (`api.github.com`) y la descarga del instalador desde GitHub cuando el usuario elige actualizar; la comprobación automática se desactiva en `Configuración > Preferencias…`. Aparte de eso, este programa no transfiere información a otros sistemas en red salvo que lo solicite expresamente el usuario o la persona que lo instala o lo utiliza.
+
 ## Actualizaciones
 
 Pluma comprueba en segundo plano, como máximo una vez al día, si hay una versión nueva en GitHub Releases (también a demanda en `Ayuda > Buscar actualizaciones…`). Si la hay, muestra las novedades y permite elegir:
