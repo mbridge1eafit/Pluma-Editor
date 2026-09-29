@@ -89,6 +89,7 @@ ctest --preset asan --output-on-failure
 - **Preferencias:** `Configuración > Preferencias…` (`Ctrl+,`). Se guardan en `%APPDATA%\Pluma\pluma.ini`; si existe un `pluma.ini` junto a `pluma.exe`, se usa ese archivo (modo portable).
 - **Editar desde la vista previa:** doble clic sobre un texto de la vista previa lleva el cursor del editor a ese carácter (en «Solo vista previa» cambia a vista dividida). Las casillas de las listas de tareas se marcan y desmarcan con un clic; `Ctrl+Z` lo deshace.
 - **Panel de encabezados:** `Ver > Panel de encabezados` (`Ctrl+Shift+E`). Se redimensiona arrastrando su borde derecho (doble clic restablece el ancho).
+- **Explorador de archivos:** `Ver > Explorador de archivos` (`Ctrl+Shift+F`) o `Archivo > Abrir carpeta...`. Muestra en árbol las subcarpetas y los archivos Markdown de una carpeta; la barra de ruta sube a cualquier carpeta superior (`Alt+Flecha arriba` sube un nivel) y el menú contextual permite entrar en una carpeta, mostrarla en el Explorador de Windows o copiar su ruta. `F5` actualiza. Al arrancar sin documento vuelve a la última carpeta.
 - **Editor predeterminado de Markdown:** `Configuración > Establecer como editor predeterminado de Markdown…` registra Pluma para `.md`, `.markdown` y `.mdown` (sin permisos de administrador) y abre el selector de Windows para confirmar el cambio.
 
 ## Benchmarks de Rendimiento

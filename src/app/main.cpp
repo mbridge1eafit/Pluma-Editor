@@ -210,10 +210,15 @@ public:
         UpdateWindow(m_hwnd);
 
         std::filesystem::path fileToOpen = initialFile;
-        if (fileToOpen.empty() && m_settings.reopenLastFile && !m_settings.lastFile.empty()) {
-            std::error_code ec;
-            if (std::filesystem::is_regular_file(m_settings.lastFile, ec)) {
-                fileToOpen = m_settings.lastFile;
+        if (fileToOpen.empty()) {
+            // Started without a document: the explorer shows the folder it showed last time (a
+            // document opened from the command line shows its own folder instead).
+            m_explorer.SetRootFolder(m_settings.explorerFolder);
+            if (m_settings.reopenLastFile && !m_settings.lastFile.empty()) {
+                std::error_code ec;
+                if (std::filesystem::is_regular_file(m_settings.lastFile, ec)) {
+                    fileToOpen = m_settings.lastFile;
+                }
             }
         }
         if (!fileToOpen.empty()) {
@@ -265,11 +270,12 @@ public:
         m_preview.SetBaseDirectory(m_currentPath.parent_path());
         m_preview.ResetScroll();
         if (m_syncScroll) m_syncScroll->Reset();
-        m_explorer.SetCurrentFile(m_currentPath);
         AddToRecentDocsAsync(m_currentPath);
 
         UpdateTitle();
         TriggerParse(true);
+        // After the parse request: the folders the explorer reads overlap with the parse.
+        m_explorer.SetCurrentFile(m_currentPath);
         UpdateStatusBar();
     }
 
@@ -308,8 +314,7 @@ public:
         m_currentPath = path;
         m_editor.SetSavePoint();
         m_preview.SetBaseDirectory(m_currentPath.parent_path());
-        m_explorer.SetCurrentFile(m_currentPath);
-        m_explorer.Refresh(); // The save may have created a new file in the folder.
+        m_explorer.SetCurrentFile(m_currentPath); // Lists its folder again when the save created the file
         UpdateTitle();
         UpdateStatusBar();
         return true;
@@ -1513,6 +1518,12 @@ private:
             case IDM_FILE_OPEN:
                 ShowOpenDialog();
                 return 0;
+            case IDM_FILE_OPEN_FOLDER:
+                if (m_explorer.ChooseRootFolder()) {
+                    if (!m_settings.showExplorer) SetExplorerVisible(true);
+                    m_explorer.Focus();
+                }
+                return 0;
             case IDM_FILE_SAVE:
                 SaveFile();
                 return 0;
@@ -1803,10 +1814,7 @@ private:
     void SetExplorerVisible(bool visible) {
         const bool hadFocus = !visible && m_explorer.GetHwnd() && IsChild(m_explorer.GetHwnd(), GetFocus());
         m_settings.showExplorer = visible;
-        if (visible) {
-            m_explorer.SetCurrentFile(m_currentPath);
-        }
-        RelayoutChildren();
+        RelayoutChildren(); // The explorer reads its folders once it is shown
         if (hadFocus) FocusMainView();
     }
 
@@ -1843,6 +1851,7 @@ private:
         m_settings.splitRatio = m_splitRatio;
         m_settings.wordWrap = m_editor.GetWordWrap();
         m_settings.lastFile = m_currentPath.wstring();
+        m_settings.explorerFolder = m_explorer.GetRootFolder().wstring();
 
         WINDOWPLACEMENT wp{sizeof(wp)};
         if (m_hwnd && GetWindowPlacement(m_hwnd, &wp)) {
