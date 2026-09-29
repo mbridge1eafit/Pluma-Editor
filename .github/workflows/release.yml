@@ -65,6 +65,20 @@ jobs:
         run: |
           .\scripts\package_release.ps1 -Version "${{ steps.version.outputs.tag }}" -RequireInstaller
 
+      # Microsoft Store package (Decision 017). Unsigned: the Store signs it when it is published. It is
+      # uploaded to Partner Center by hand (store/README.md), so it is a workflow artifact, not a release asset.
+      - name: Package MSIX (Microsoft Store)
+        shell: pwsh
+        run: |
+          .\scripts\package_msix.ps1 -Version "${{ steps.version.outputs.tag }}"
+
+      - name: Upload MSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: pluma-${{ steps.version.outputs.tag }}-msix
+          path: dist/*.msix
+          if-no-files-found: error
+
       # After packaging, so the notes embed the checksums of the published artifacts.
       - name: Generate Release Notes
         shell: pwsh

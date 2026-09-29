@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX manifest of Pluma for the Microsoft Store (Decision 017).
+  Template: scripts\package_msix.ps1 replaces the placeholders with packaging\msix\identity.json (values
+  from Partner Center) and the version of project(VERSION) in CMakeLists.txt.
+  The Store signs the package when it is published, so it is built unsigned.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 rescap">
+
+  <Identity Name="__IDENTITY_NAME__" Publisher="__PUBLISHER__" Version="__VERSION__" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>__DISPLAY_NAME__</DisplayName>
+    <PublisherDisplayName>__PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <!-- Same minimum as the Inno Setup installer (Windows 10 1809). MaxVersionTested >= 10.0.22621.1555
+       lets "ms-settings:defaultapps?registeredAUMID=" open Pluma's own page in Default apps. -->
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <!-- The user interface is in Spanish only. -->
+  <Resources>
+    <Resource Language="es" />
+  </Resources>
+
+  <Applications>
+    <!-- Application Id "Pluma": the AUMID is "<PackageFamilyName>!Pluma". -->
+    <Application Id="Pluma" Executable="pluma.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="__DISPLAY_NAME__"
+        Description="Editor Markdown nativo para Windows"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+
+      <Extensions>
+        <!-- Same extensions as the installer (installer\pluma.iss) and RegisterMarkdownHandler; the
+             document is passed as the only argument, like "pluma.exe" "%1". -->
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap3:FileTypeAssociation Name="markdown" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>Documento Markdown</uap:DisplayName>
+            <uap:Logo>Assets\MarkdownFile.png</uap:Logo>
+            <uap:SupportedFileTypes>
+              <uap:FileType ContentType="text/markdown">.md</uap:FileType>
+              <uap:FileType ContentType="text/markdown">.markdown</uap:FileType>
+              <uap:FileType ContentType="text/markdown">.mdown</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap3:FileTypeAssociation>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <!-- Win32 desktop app: runs as the user, outside the AppContainer. -->
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
