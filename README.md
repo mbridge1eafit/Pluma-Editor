@@ -108,3 +108,8 @@ Para ejecutar la medición automatizada del arranque en frío (NF-01):
 - **Diagramas Mermaid:** motor nativo propio (`src/diagram/`) para `flowchart`/`graph`, `sequenceDiagram`, `stateDiagram` y `pie`; se dibujan en la vista previa (Direct2D), como SVG inline en HTML y como vectores en PDF. Los demás tipos se muestran como código con un aviso.
 - **Acceso a Win32:** API Unicode (`W`), Per-Monitor DPI Aware v2, tema oscuro vía DWM.
 - **Sin runtimes externos:** Solamente DLLs nativas del sistema operativo de Windows.
+
+## Licencia
+
+Este proyecto está licenciado bajo los términos de la **GNU General Public License v3.0 (GPL-3.0)**. Consulta el archivo [LICENSE](LICENSE) para ver el texto completo.
+

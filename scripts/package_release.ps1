@@ -83,6 +83,7 @@ New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
 # Copiar archivos esenciales
 Write-Host "--> Copiando archivos..." -ForegroundColor Gray
 Copy-Item $exePath -Destination $stageDir
+if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination $stageDir }
 if (Test-Path "README.md") { Copy-Item "README.md" -Destination $stageDir }
 if (Test-Path "markdown.ico") { Copy-Item "markdown.ico" -Destination $stageDir }
 
