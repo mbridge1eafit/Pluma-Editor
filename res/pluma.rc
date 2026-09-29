@@ -83,6 +83,7 @@ BEGIN
     BEGIN
         MENUITEM "&Nuevo\tCtrl+N",               IDM_FILE_NEW
         MENUITEM "&Abrir...\tCtrl+O",            IDM_FILE_OPEN
+        MENUITEM "Abrir ca&rpeta...",            IDM_FILE_OPEN_FOLDER
         MENUITEM "&Guardar\tCtrl+S",             IDM_FILE_SAVE
         MENUITEM "Guardar &como...\tCtrl+Shift+S", IDM_FILE_SAVEAS
         MENUITEM SEPARATOR

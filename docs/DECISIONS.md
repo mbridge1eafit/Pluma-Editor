@@ -224,3 +224,23 @@ Este documento registra las decisiones técnicas tomadas durante el desarrollo d
 - **Alternativas descartadas:**
   - *Pasar la vista previa a `ID2D1DeviceContext` con una cadena de intercambio DXGI sobre un dispositivo creado de antemano:* aprovecharía todo el dispositivo precalentado, pero exige rehacer la gestión del render target; el precalentamiento simple ya recupera ~60 ms.
   - *Renderizado por software (WARP):* evita el driver, pero dibuja más lento en documentos grandes y con Mermaid.
+
+---
+
+## [2026-09-28] Decisión 016: Explorador de archivos con navegación entre carpetas
+
+- **Contexto:** El explorador solo listaba los archivos Markdown de la carpeta del documento abierto: no se podía subir a la carpeta superior ni entrar en subcarpetas, y un documento nuevo vaciaba el panel. Se pidió poder navegar entre carpetas de distintos niveles.
+- **Decisión:**
+  - *Árbol con carga perezosa:* el panel muestra la carpeta raíz en un `TreeView` con sus subcarpetas (primero) y sus archivos Markdown, en el orden natural del Explorador de Windows (`CompareStringEx` con `SORT_DIGITSASNUMBERS`: «Capítulo 2» antes que «Capítulo 10»). Cada carpeta se lee (`FindFirstFileExW` con `FIND_FIRST_EX_LARGE_FETCH`) la primera vez que se expande; si no contiene nada, pierde la flecha. Se omiten los elementos ocultos y las carpetas de control de versiones (`.git`, `.svn`, `.hg`). Mientras el panel está oculto no se lee nada del disco: los cambios se aplican al mostrarlo.
+  - *Barra de ruta:* bajo el título, un botón «Subir un nivel» (`Alt+Flecha arriba`) y la ruta de la raíz como migas de pan (`D: › PROYECTOS › Pluma`); un clic en una carpeta superior la convierte en la raíz. Si la ruta no cabe, las primeras carpetas se agrupan en un botón «…» que las muestra en un menú. La unidad o el recurso compartido de red (`\\servidor\recurso`) es el tope.
+  - *Estado al navegar:* las carpetas expandidas se recuerdan por ruta, también fuera de la raíz actual: al subir de nivel, la raíz anterior aparece expandida y seleccionada, y al volver a bajar sigue abierto lo que lo estaba. «Actualizar» (`F5`) relee las carpetas expandidas conservando la selección y el desplazamiento.
+  - *Documento actual:* un documento dentro de la raíz se revela expandiendo sus carpetas y se marca en negrita; uno de fuera hace de su carpeta la raíz, como antes (también si está en una carpeta oculta). Tras «Guardar como», la carpeta se vuelve a leer solo si el archivo no aparece en ella. Un documento nuevo ya no vacía el panel.
+  - *Abrir carpeta:* `Archivo > Abrir carpeta...`, el botón del panel o el marcador «Abrir una carpeta...» abren el selector de carpetas de Windows (`IFileOpenDialog` con `FOS_PICKFOLDERS`). El menú contextual permite abrir el archivo, entrar en la carpeta, mostrarla en el Explorador de Windows (`SHOpenFolderAndSelectItems`) y copiar la ruta.
+  - *Persistencia:* `[Files] ExplorerFolder` guarda la carpeta raíz, que se restaura cuando Pluma arranca sin documento; con un documento en la línea de comandos manda la carpeta del documento.
+  - *Iconos:* los glifos de Segoe Fluent Icons / Segoe MDL2 Assets (carpeta cerrada y abierta, página) se rasterizan en una sola pasada, con antialiasing en escala de grises, a una tira de 32 bits con alfa premultiplicado y máscara (`Platform::CreateGlyphStrip`) que se añade de una vez a la lista de imágenes, en los colores del tema; se regeneran al cambiar de tema o de DPI. Son coherentes con la barra de herramientas y no cargan la lista de imágenes del shell.
+  - *Arranque (NF-01):* los iconos y los tooltips del panel se crean la primera vez que se muestra, con un mensaje encolado que se procesa después del primer pintado. Crearlos en `WM_CREATE` (icono a icono y dos veces, al crear el panel y al aplicar el tema) añadía ~20 ms al arranque aunque el panel estuviera oculto; así, el arranque medido con `bench/startup.ps1` es el mismo que antes con el explorador oculto o visible.
+- **Alternativas descartadas:**
+  - *Lista plana con «..» y doble clic para entrar, como un diálogo de archivos:* muestra un solo nivel a la vez; el árbol deja ver varios niveles y abrir documentos de subcarpetas sin perder el contexto.
+  - *Iconos del sistema (`SHGetFileInfo`):* coste de carga en el arranque, escalado al DPI del sistema en lugar del monitor e iconos que dependen de la aplicación asociada a `.md`.
+  - *Vigilar las carpetas con `ReadDirectoryChangesW`:* un hilo y la gestión de ráfagas de cambios para una mejora menor; `F5` y la relectura al guardar cubren el uso habitual.
+  - *Recorrer el árbol al abrir una carpeta para mostrar solo las que contienen Markdown:* coste imprevisible en carpetas grandes (`node_modules`, unidades de red).

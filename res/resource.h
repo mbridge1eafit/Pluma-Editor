@@ -13,6 +13,7 @@
 #define IDM_FILE_SAVEAS                 40004
 #define IDM_FILE_EXPORT_HTML            40006
 #define IDM_FILE_EXPORT_PDF             40007
+#define IDM_FILE_OPEN_FOLDER            40008
 #define IDM_FILE_EXIT                   40005
 
 #define IDM_EDIT_UNDO                   40011

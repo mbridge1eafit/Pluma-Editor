@@ -49,6 +49,7 @@ TEST(SettingsTest, RoundTripPreservesEveryValue) {
     s.windowMaximized = true;
     s.reopenLastFile = true;
     s.lastFile = L"C:\\Documentos\\Notas = ideas.md";
+    s.explorerFolder = L"D:\\Proyectos\\Mis notas";
     s.pdfPageSize = Pluma::Export::PageSize::Letter;
     s.pdfMarginMm = 15;
     s.htmlTheme = Pluma::Export::HtmlTheme::Dark;
@@ -83,6 +84,7 @@ TEST(SettingsTest, RoundTripPreservesEveryValue) {
     EXPECT_EQ(r.windowMaximized, s.windowMaximized);
     EXPECT_EQ(r.reopenLastFile, s.reopenLastFile);
     EXPECT_EQ(r.lastFile, s.lastFile);
+    EXPECT_EQ(r.explorerFolder, s.explorerFolder);
     EXPECT_EQ(r.pdfPageSize, s.pdfPageSize);
     EXPECT_EQ(r.pdfMarginMm, s.pdfMarginMm);
     EXPECT_EQ(r.htmlTheme, s.htmlTheme);

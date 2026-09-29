@@ -83,6 +83,7 @@ Source is under `src/`, organized by concern; each module pairs a `.h`/`.cpp`. M
 - **`src/app/`** — `main.cpp` (message loop, `MainWindow`), `settings_dialog.*` (Preferences UI), `update_ui.*` (update flow dialogs).
 - **`src/config/settings.*`** — hand-rolled INI parser/serializer; config lives at `%APPDATA%\Pluma\pluma.ini`, or `pluma.ini` next to the executable if present (portable mode). Out-of-range values are clamped, invalid ones keep defaults.
 - **`src/outline/outline_panel.*`** — headings `TreeView` panel, fed from the same async-parsed AST (no extra parse pass).
+- **`src/explorer/file_explorer_panel.*`** — file explorer panel: a lazily-loaded folder `TreeView` (subfolders + Markdown files) under a breadcrumb path bar; reads nothing from disk while hidden. The root folder persists as `ExplorerFolder`. Pure helpers (`ListFolder`, `IsWithinFolder`, `FolderChain`, `FirstVisibleSegment`) and the panel's tree behavior are unit-tested.
 - **`src/platform/`** — `dpi.*` (Per-Monitor DPI v2), `theme.*` (dark mode via DWM), `file_association.*` (HKCU-only, no-elevation `.md`/`.markdown`/`.mdown` registration).
 - **`src/update/`** — self-update pipeline: `updater.*` orchestrates, `http_client.*` wraps WinHTTP, `release_info.*`/`json.*` parse the GitHub Releases API response, `sha256.*` verifies the downloaded installer (via CNG/`bcrypt`) against the published `SHA256SUMS.txt`, `version.*` does SemVer comparison. Checked once/day, 4s after startup (off the critical path), or on demand.
 

@@ -82,6 +82,7 @@ struct Settings {
     // Files
     bool reopenLastFile = false;
     std::wstring lastFile;
+    std::wstring explorerFolder;      // File explorer folder, restored when starting without a document
 
     // Export
     Export::PageSize pdfPageSize = Export::PageSize::A4;

@@ -282,6 +282,7 @@ Settings ParseSettings(std::string_view iniUtf8) {
 
     ReadBool(v, "files.reopenlastfile", s.reopenLastFile);
     ReadString(v, "files.lastfile", s.lastFile);
+    ReadString(v, "files.explorerfolder", s.explorerFolder);
 
     ReadEnum(v, "export.pdfpagesize", s.pdfPageSize, kPageSizes);
     ReadInt(v, "export.pdfmarginmm", s.pdfMarginMm);
@@ -337,6 +338,7 @@ std::string SerializeSettings(const Settings& s) {
     w.Section("Files");
     w.Bool("ReopenLastFile", s.reopenLastFile);
     w.Value("LastFile", Utf16ToUtf8(s.lastFile));
+    w.Value("ExplorerFolder", Utf16ToUtf8(s.explorerFolder));
 
     w.Section("Export");
     w.Value("PdfPageSize", EnumName(s.pdfPageSize, kPageSizes));

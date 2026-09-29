@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
+#include <windows.h>
+#include <commctrl.h>
 #include "platform/dpi.h"
+#include "platform/icon_font.h"
 #include "platform/theme.h"
 
 TEST(PlatformDpiTest, ScaleForDpiCalculations) {
@@ -35,3 +38,42 @@ TEST(PlatformThemeTest, ThemeModeResolution) {
               Pluma::Platform::IsSystemDarkMode());
 }
 
+
+TEST(PlatformIconFontTest, GlyphStripFillsAnImageList) {
+    constexpr int kSize = 16;
+    const Pluma::Platform::GlyphColor glyphs[] = {
+        {Pluma::Platform::Glyph::kFolderClosed, RGB(200, 150, 30)},
+        {Pluma::Platform::Glyph::kFile, RGB(60, 120, 180)},
+        {L"", RGB(0, 0, 0)}, // Blank
+    };
+    HBITMAP mask = nullptr;
+    HBITMAP strip = Pluma::Platform::CreateGlyphStrip(glyphs, kSize, &mask);
+    ASSERT_NE(strip, nullptr);
+    ASSERT_NE(mask, nullptr);
+
+    BITMAP info{};
+    ASSERT_NE(GetObjectW(strip, sizeof(info), &info), 0);
+    EXPECT_EQ(info.bmWidth, kSize * 3);
+    EXPECT_EQ(info.bmHeight, kSize);
+    EXPECT_EQ(info.bmBitsPixel, 32);
+
+    // Drawn glyphs have opaque pixels in their color (premultiplied); the blank image has none.
+    const auto* pixels = static_cast<const DWORD*>(info.bmBits);
+    int opaque[3] = {};
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize * 3; ++x) {
+            if ((pixels[y * kSize * 3 + x] >> 24) == 0xFF) ++opaque[x / kSize];
+        }
+    }
+    EXPECT_GT(opaque[0], 0);
+    EXPECT_GT(opaque[1], 0);
+    EXPECT_EQ(opaque[2], 0);
+
+    HIMAGELIST images = ImageList_Create(kSize, kSize, ILC_COLOR32 | ILC_MASK, 3, 0);
+    ASSERT_NE(images, nullptr);
+    EXPECT_EQ(ImageList_Add(images, strip, mask), 0);
+    EXPECT_EQ(ImageList_GetImageCount(images), 3);
+    ImageList_Destroy(images);
+    DeleteObject(strip);
+    DeleteObject(mask);
+}

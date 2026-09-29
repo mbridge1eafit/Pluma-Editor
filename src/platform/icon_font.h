@@ -5,6 +5,8 @@
 #endif
 #include <windows.h>
 
+#include <span>
+
 namespace Pluma::Platform {
 
 // Glyphs shared by Segoe Fluent Icons (Windows 11) and Segoe MDL2 Assets (Windows 10).
@@ -20,11 +22,15 @@ constexpr wchar_t kPaste[] = L"";
 constexpr wchar_t kFind[] = L"";
 constexpr wchar_t kSettings[] = L"";
 constexpr wchar_t kFolder[] = L"";
+constexpr wchar_t kFolderClosed[] = L"";
 constexpr wchar_t kList[] = L"";
 constexpr wchar_t kRefresh[] = L"";
 constexpr wchar_t kClose[] = L"";
 constexpr wchar_t kChevronDown[] = L"";
 constexpr wchar_t kMore[] = L"";
+constexpr wchar_t kUp[] = L"";
+constexpr wchar_t kChevronRight[] = L"";
+constexpr wchar_t kFile[] = L"";
 // Format bar
 constexpr wchar_t kBold[] = L"";
 constexpr wchar_t kItalic[] = L"";
@@ -46,5 +52,15 @@ HFONT CreateIconFont(int pixelHeight);
 
 // Draws `glyph` centered in `rc` with the currently selected icon font.
 void DrawGlyph(HDC hdc, const wchar_t* glyph, const RECT& rc, COLORREF color);
+
+struct GlyphColor {
+    const wchar_t* glyph; // Empty: a transparent image
+    COLORREF color;
+};
+
+// Renders `glyphs` side by side, `size` pixels square each, with an antialiased alpha channel: a
+// strip for ImageList_Add. Returns the 32-bit color bitmap and sets `mask` to its transparency
+// mask; the caller deletes both.
+HBITMAP CreateGlyphStrip(std::span<const GlyphColor> glyphs, int size, HBITMAP* mask);
 
 } // namespace Pluma::Platform

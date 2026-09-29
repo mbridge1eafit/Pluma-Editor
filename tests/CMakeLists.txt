@@ -25,12 +25,15 @@ set(UNIT_TEST_SOURCES
     unit/test_pdf_exporter.cpp
     unit/test_settings.cpp
     unit/test_outline.cpp
+    unit/test_file_explorer.cpp
     unit/test_mermaid.cpp
     unit/test_update.cpp
     ../src/config/settings.cpp
     ../src/config/settings.h
     ../src/outline/outline_panel.cpp
     ../src/outline/outline_panel.h
+    ../src/explorer/file_explorer_panel.cpp
+    ../src/explorer/file_explorer_panel.h
     ../src/platform/dpi.cpp
     ../src/platform/icon_font.cpp
     ../src/platform/dpi.h
