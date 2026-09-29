@@ -1,7 +1,7 @@
 {
-  "_ayuda": "Valores de Partner Center > Pluma > Identidad del producto (Product identity). Mientras contengan PENDIENTE, scripts/package_msix.ps1 genera un paquete solo para pruebas locales. Ver store/README.md.",
-  "identityName": "PENDIENTE.Pluma",
-  "publisher": "CN=PENDIENTE",
-  "publisherDisplayName": "Mauricio Bridge",
-  "displayName": "Pluma"
+  "_ayuda": "Valores de Partner Center > Pluma Markdown Editor > Identidad del producto (Product identity). Ver store/README.md.",
+  "identityName": "mBridge.PlumaMarkdownEditor",
+  "publisher": "CN=9AEF37B6-D38E-4341-9DEC-5B2BC9691C14",
+  "publisherDisplayName": "mBridge",
+  "displayName": "Pluma Markdown Editor"
 }
