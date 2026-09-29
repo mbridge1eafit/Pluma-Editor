@@ -38,7 +38,7 @@ The project provides three automated scripts in `scripts/`:
 
 Building the installer needs Inno Setup 6 (`winget install --id JRSoftware.InnoSetup -e`; CI installs it with Chocolatey). Without it `package_release.ps1` only warns and skips the installer, but `-RequireInstaller` (used by CI) and `publish_release.ps1 -Mode gh-cli` fail: **every release must publish the installer**, because Pluma's built-in updater downloads `pluma-vX.Y.Z-setup-x64.exe` and verifies it against `SHA256SUMS.txt`.
 
-The Microsoft Store package is separate from the GitHub release: `release.yml` also runs `scripts/package_msix.ps1` and uploads `pluma-vX.Y.Z-x64.msix` as a workflow artifact (`pluma-vX.Y.Z-msix`), not as a release asset. After the release, submit it in Partner Center following `store/README.md` (*Cada versión nueva*); it needs the real identity in `packaging/msix/identity.json` (`package_msix.ps1 -RequireStoreIdentity` checks it).
+The Microsoft Store package is separate from the GitHub release: `release.yml` also runs `scripts/package_msix.ps1` and uploads `pluma-vX.Y.Z-x64.msix` as a workflow artifact (`pluma-vX.Y.Z-msix`), not as a release asset. After the release, submit it to the Store with the `msstore-publish` skill (`/msstore-publish`; human guide: `store/README.md`, *Cada versión nueva*); it needs the real identity in `packaging/msix/identity.json` (`package_msix.ps1 -RequireStoreIdentity` checks it).
 
 Run the scripts with PowerShell 7 (`pwsh`). Launching Windows PowerShell 5.1 (`powershell.exe`) from a PowerShell 7 console inherits a `PSModulePath` that breaks `Get-FileHash`. Build steps need the MSVC environment (`vcvars64.bat`) loaded.
 

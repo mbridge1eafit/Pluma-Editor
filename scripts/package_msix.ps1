@@ -185,4 +185,4 @@ $sizeKb = [math]::Round((Get-Item $msixFile).Length / 1KB)
 Write-Host ""
 Write-Host "[OK] Paquete MSIX: $msixFile ($sizeKb KB, versión $packageVersion, sin firmar)" -ForegroundColor Green
 Write-Host "  * Identidad: $($identity.identityName) / $($identity.publisher)"
-Write-Host "  * Súbalo en Partner Center > Pluma > Envío > Paquetes (ver store\README.md)."
+Write-Host "  * Súbalo en Partner Center, sección Paquetes del envío (ver store\README.md o la skill msstore-publish)."

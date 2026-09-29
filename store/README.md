@@ -94,6 +94,8 @@ Pulsa **Enviar a la Store**. La certificación suele tardar desde unas horas has
 
 ## Cada versión nueva
 
+Con Claude Code, la skill `/msstore-publish` hace estos pasos: descarga y valida el MSIX del release, prepara el envío en Partner Center desde Chrome y te pide confirmación antes de enviarlo a certificación. También sirve para cambiar la ficha, hacer visible la app o consultar el estado de la certificación. A mano:
+
 1. Publica el release de GitHub como siempre (skill `github-release`).
 2. Descarga el artefacto `pluma-vX.Y.Z-msix` del workflow **Release**, o genéralo con `package_msix.ps1 -RequireStoreIdentity`.
 3. En Partner Center, **Actualizar** el envío:
