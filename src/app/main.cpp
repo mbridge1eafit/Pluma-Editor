@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <ctime>
 
+#include "../platform/app_package.h"
 #include "../platform/dpi.h"
 #include "../platform/theme.h"
 #include "../io/document_io.h"
@@ -190,6 +191,10 @@ public:
         SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(wcex.hIcon));
         SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wcex.hIconSm));
 
+        // The Store package is updated by the Store (Decision 017).
+        const bool packaged = Pluma::Platform::IsPackaged();
+        if (packaged) RemoveUpdateMenuItem();
+
         // Setup drag and drop (F-01, M1.5)
         DragAcceptFiles(m_hwnd, TRUE);
 
@@ -227,7 +232,7 @@ public:
             UpdateTitle();
         }
 
-        if (m_settings.checkForUpdates &&
+        if (!packaged && m_settings.checkForUpdates &&
             Pluma::Update::IsUpdateCheckDue(m_settings.lastUpdateCheck, static_cast<int64_t>(std::time(nullptr)))) {
             SetTimer(m_hwnd, kUpdateCheckTimerId, kUpdateCheckDelayMs, nullptr);
         }
@@ -1887,11 +1892,13 @@ private:
         FocusMainView();
     }
 
-    // Registers Pluma for .md files and asks Windows to make it the default editor.
+    // Registers Pluma for .md files and asks Windows to make it the default editor. The Store package
+    // already declares its file types in its manifest: only the Settings step applies.
     void MakeDefaultEditor(HWND owner) {
         const std::wstring exePath = Pluma::Platform::GetExecutablePath();
+        const bool packaged = Pluma::Platform::IsPackaged();
         const bool wasDefault = Pluma::Platform::IsDefaultMarkdownHandler(exePath);
-        if (!Pluma::Platform::RegisterMarkdownHandler(exePath)) {
+        if (!packaged && !Pluma::Platform::RegisterMarkdownHandler(exePath)) {
             MessageBoxW(owner, L"No se pudo registrar Pluma como aplicación para archivos Markdown.",
                         L"Editor predeterminado", MB_OK | MB_ICONERROR);
             return;
@@ -1905,13 +1912,14 @@ private:
             return;
         }
 
-        const int answer = MessageBoxW(owner,
-            L"Pluma se ha registrado como aplicación para archivos Markdown.\n\n"
+        const std::wstring intro = packaged ? L"Pluma puede abrir archivos Markdown.\n\n"
+                                            : L"Pluma se ha registrado como aplicación para archivos Markdown.\n\n";
+        const int answer = MessageBoxW(owner, (intro +
             L"Windows solo permite cambiar el editor predeterminado desde Configuración. "
             L"A continuación se abrirá Configuración > Aplicaciones > Aplicaciones predeterminadas:\n\n"
             L"\u2022 Windows 11: asigne Pluma a .md, .markdown y .mdown.\n"
             L"\u2022 Windows 10: pulse \u00abEstablecer valores predeterminados por aplicación\u00bb, "
-            L"elija Pluma, pulse \u00abAdministrar\u00bb y asigne Pluma a cada extensión.",
+            L"elija Pluma, pulse \u00abAdministrar\u00bb y asigne Pluma a cada extensión.").c_str(),
             L"Editor predeterminado", MB_OKCANCEL | MB_ICONINFORMATION);
         if (answer != IDOK) return;
 
@@ -1926,6 +1934,26 @@ private:
 
     // ---------------------------------------------------------------------------------------------
     // Updates
+
+    // Removes "Buscar actualizaciones..." and the separator that follows it.
+    void RemoveUpdateMenuItem() {
+        HMENU menuBar = GetMenu(m_hwnd);
+        const int menus = menuBar ? GetMenuItemCount(menuBar) : 0;
+        for (int i = 0; i < menus; ++i) {
+            HMENU popup = GetSubMenu(menuBar, i);
+            const int items = popup ? GetMenuItemCount(popup) : 0;
+            for (int pos = 0; pos < items; ++pos) {
+                if (GetMenuItemID(popup, pos) != static_cast<UINT>(IDM_HELP_CHECK_UPDATES)) continue;
+                DeleteMenu(popup, static_cast<UINT>(pos), MF_BYPOSITION);
+                if (pos < GetMenuItemCount(popup) &&
+                    (GetMenuState(popup, static_cast<UINT>(pos), MF_BYPOSITION) & MF_SEPARATOR)) {
+                    DeleteMenu(popup, static_cast<UINT>(pos), MF_BYPOSITION);
+                }
+                DrawMenuBar(m_hwnd);
+                return;
+            }
+        }
+    }
 
     void StartUpdateCheck(bool manual) {
         if (m_updateCheckRunning) return;

@@ -34,6 +34,10 @@ set(UNIT_TEST_SOURCES
     ../src/outline/outline_panel.h
     ../src/explorer/file_explorer_panel.cpp
     ../src/explorer/file_explorer_panel.h
+    ../src/platform/app_package.cpp
+    ../src/platform/app_package.h
+    ../src/platform/file_association.cpp
+    ../src/platform/file_association.h
     ../src/platform/dpi.cpp
     ../src/platform/icon_font.cpp
     ../src/platform/dpi.h
@@ -118,6 +122,7 @@ target_link_libraries(unit_tests PRIVATE
     imm32
     ole32
     shell32
+    shlwapi
     comctl32
     uuid
     windowscodecs

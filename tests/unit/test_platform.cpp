@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include <windows.h>
 #include <commctrl.h>
+#include "platform/app_package.h"
 #include "platform/dpi.h"
+#include "platform/file_association.h"
 #include "platform/icon_font.h"
 #include "platform/theme.h"
 
@@ -76,4 +78,29 @@ TEST(PlatformIconFontTest, GlyphStripFillsAnImageList) {
     ImageList_Destroy(images);
     DeleteObject(strip);
     DeleteObject(mask);
+}
+
+TEST(PlatformAppPackageTest, UnpackagedProcessHasNoIdentity) {
+    // The test runner is a plain executable: no MSIX package identity.
+    EXPECT_FALSE(Pluma::Platform::IsPackaged());
+    EXPECT_TRUE(Pluma::Platform::GetAppUserModelId().empty());
+}
+
+TEST(PlatformAppPackageTest, EscapeUriComponentKeepsOnlyUnreservedCharacters) {
+    using Pluma::Platform::EscapeUriComponent;
+    EXPECT_EQ(EscapeUriComponent(L"AZaz09-_.~"), L"AZaz09-_.~");
+    EXPECT_EQ(EscapeUriComponent(L"Pluma_8wekyb3d8bbwe!Pluma"), L"Pluma_8wekyb3d8bbwe%21Pluma");
+    EXPECT_EQ(EscapeUriComponent(L"a b/c?d&e"), L"a%20b%2Fc%3Fd%26e");
+    EXPECT_EQ(EscapeUriComponent(L"ñ"), L"%C3%B1");         // n with tilde: 2 UTF-8 bytes
+    EXPECT_EQ(EscapeUriComponent(L"€"), L"%E2%82%AC");      // euro sign: 3 bytes
+    EXPECT_EQ(EscapeUriComponent(L"😀"), L"%F0%9F%98%80"); // surrogate pair: 4 bytes
+    EXPECT_EQ(EscapeUriComponent(std::wstring(1, static_cast<wchar_t>(0xD800))), L"%EF%BF%BD"); // lone surrogate
+    EXPECT_EQ(EscapeUriComponent(L""), L"");
+}
+
+TEST(PlatformFileAssociationTest, DefaultAppsUriUsesRegisteredNameOrPackageAumid) {
+    using Pluma::Platform::DefaultAppsSettingsUri;
+    EXPECT_EQ(DefaultAppsSettingsUri(L""), L"ms-settings:defaultapps?registeredAppUser=Pluma");
+    EXPECT_EQ(DefaultAppsSettingsUri(L"12345Publisher.Pluma_abcd1234efgh5!Pluma"),
+              L"ms-settings:defaultapps?registeredAUMID=12345Publisher.Pluma_abcd1234efgh5%21Pluma");
 }

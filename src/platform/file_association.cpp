@@ -7,6 +7,7 @@
 #include <filesystem>
 
 #include "../../res/resource.h"
+#include "app_package.h"
 
 namespace Pluma::Platform {
 
@@ -104,6 +105,19 @@ bool RegisterMarkdownHandler(const std::wstring& exePath) {
 }
 
 bool IsDefaultMarkdownHandler(const std::wstring& exePath) {
+    if (IsPackaged()) {
+        // A packaged handler is identified by its AUMID: its executable lives in WindowsApps and the
+        // association points to the package, not to a command line.
+        const std::wstring aumid = GetAppUserModelId();
+        wchar_t appId[512]{};
+        DWORD appIdSize = static_cast<DWORD>(std::size(appId));
+        if (aumid.empty() ||
+            FAILED(AssocQueryStringW(ASSOCF_NOTRUNCATE, ASSOCSTR_APPID, L".md", nullptr, appId, &appIdSize))) {
+            return false;
+        }
+        return CompareStringOrdinal(appId, -1, aumid.c_str(), static_cast<int>(aumid.size()), TRUE) == CSTR_EQUAL;
+    }
+
     if (exePath.empty()) return false;
     wchar_t buffer[MAX_PATH * 2]{};
     DWORD size = static_cast<DWORD>(std::size(buffer));
@@ -116,12 +130,17 @@ bool IsDefaultMarkdownHandler(const std::wstring& exePath) {
                                 static_cast<int>(ours.size()), TRUE) == CSTR_EQUAL;
 }
 
+std::wstring DefaultAppsSettingsUri(const std::wstring& appUserModelId) {
+    // Windows 11 (2023-04 update or later) opens the app's own page; older builds, including
+    // Windows 10, ignore the query and open Default apps.
+    if (appUserModelId.empty()) return std::wstring(L"ms-settings:defaultapps?registeredAppUser=") + kAppName;
+    return L"ms-settings:defaultapps?registeredAUMID=" + EscapeUriComponent(appUserModelId);
+}
+
 bool OpenDefaultAppsSettings(HWND owner) {
     // SHOpenWithDialog cannot do this since Windows 10: it ignores the registration flags and, without
     // OAIF_EXEC, only shows a "go to Settings" notice. Settings is the supported path.
-    // Windows 11 (2023-04 update or later) opens Pluma's own page (per-user RegisteredApplications
-    // name); older builds, including Windows 10, ignore the query and open Default apps.
-    const std::wstring uri = std::wstring(L"ms-settings:defaultapps?registeredAppUser=") + kAppName;
+    const std::wstring uri = DefaultAppsSettingsUri(GetAppUserModelId());
     const auto result =
         reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", uri.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
     return result > 32;
