@@ -47,6 +47,12 @@ build\release\bin\unit_tests.exe --gtest_filter=Suite.CaseName
 .\scripts\package_release.ps1          # dist\: portable ZIP, Inno Setup installer, SHA256SUMS.txt
 ```
 
+```powershell
+.\scripts\package_msix.ps1             # dist\pluma-vX.Y.Z-x64.msix for the Microsoft Store (unsigned: the Store signs it)
+```
+
+The MSIX manifest template and the Partner Center identity live in `packaging/msix/`; everything needed to publish in the Store (listing texts, images, privacy policy, submission guide) is in `store/` (Decision 017).
+
 The installer step requires Inno Setup 6 (`winget install --id JRSoftware.InnoSetup -e`). Version is defined **only** in `project(VERSION)` in [CMakeLists.txt](CMakeLists.txt) (also mirrored in `res/pluma.manifest`); it is threaded through to code and `res/pluma.rc` via a generated `pluma_version.h`. Never publish a release tag that doesn't match `project(VERSION)` — the auto-updater compares against it. Full release automation (bump, test, package, notes, publish, verify) is documented in the `github-release` skill (`.claude/skills/github-release/SKILL.md`) — use it (or `/github-release`-style requests) instead of improvising release steps by hand.
 
 ### Benchmarks
@@ -84,11 +90,12 @@ Source is under `src/`, organized by concern; each module pairs a `.h`/`.cpp`. M
 - **`src/config/settings.*`** — hand-rolled INI parser/serializer; config lives at `%APPDATA%\Pluma\pluma.ini`, or `pluma.ini` next to the executable if present (portable mode). Out-of-range values are clamped, invalid ones keep defaults.
 - **`src/outline/outline_panel.*`** — headings `TreeView` panel, fed from the same async-parsed AST (no extra parse pass).
 - **`src/explorer/file_explorer_panel.*`** — file explorer panel: a lazily-loaded folder `TreeView` (subfolders + Markdown files) under a breadcrumb path bar; reads nothing from disk while hidden. The root folder persists as `ExplorerFolder`. Pure helpers (`ListFolder`, `IsWithinFolder`, `FolderChain`, `FirstVisibleSegment`) and the panel's tree behavior are unit-tested.
-- **`src/platform/`** — `dpi.*` (Per-Monitor DPI v2), `theme.*` (dark mode via DWM), `file_association.*` (HKCU-only, no-elevation `.md`/`.markdown`/`.mdown` registration).
+- **`src/platform/`** — `dpi.*` (Per-Monitor DPI v2), `theme.*` (dark mode via DWM), `file_association.*` (HKCU-only, no-elevation `.md`/`.markdown`/`.mdown` registration), `app_package.*` (`IsPackaged()`: running from the Store's MSIX package).
 - **`src/update/`** — self-update pipeline: `updater.*` orchestrates, `http_client.*` wraps WinHTTP, `release_info.*`/`json.*` parse the GitHub Releases API response, `sha256.*` verifies the downloaded installer (via CNG/`bcrypt`) against the published `SHA256SUMS.txt`, `version.*` does SemVer comparison. Checked once/day, 4s after startup (off the critical path), or on demand.
 
 **Cross-cutting architectural rules** (see `docs/DECISIONS.md` for full rationale per decision):
 - No WebView2/Chromium/.NET, no dynamic loading of first-party libraries (Scintilla/Lexilla/md4c are all statically linked).
 - The AST (`BlockTree`) is the single source of truth consumed directly by the DirectWrite layout engine — no intermediate HTML/DOM generation for the native preview.
 - Preview layout math is always in DIPs (device-independent pixels), never physical pixels — this was a past source of DPI-scaling bugs at 125–200%.
+- Pluma runs either unpackaged (installer/ZIP) or from the Store's MSIX package. Packaged (`Platform::IsPackaged()`), the built-in updater is off and its UI hidden, and nothing is written to the registry for file associations (the manifest declares them) — keep new update or registration code behind that check.
 - Third-party dependencies are vendored at fixed versions under `third_party/` (Scintilla 5.5.3, Lexilla 5.4.3, md4c 0.5.2) — no vcpkg/conan.
