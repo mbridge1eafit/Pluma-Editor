@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "../platform/app_package.h"
 #include "../platform/dpi.h"
 #include "../platform/theme.h"
 #include "../../res/resource.h"
@@ -360,6 +361,8 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
         SetWindowLongPtrW(hDlg, DWLP_USER, reinterpret_cast<LONG_PTR>(state));
         CreateHeaderFont(hDlg, *state);
         FillControls(hDlg, state->settings);
+        // The Store package is updated by the Store: no automatic check to configure.
+        if (Platform::IsPackaged()) ShowWindow(GetDlgItem(hDlg, IDC_SET_CHECKUPDATES), SW_HIDE);
         UpdateAssociationStatus(hDlg, *state);
         ApplyDialogTheme(hDlg, *state, Platform::IsDarkModeActive(state->settings.theme));
         return TRUE; // Focus on the first control
