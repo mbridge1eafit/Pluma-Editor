@@ -36,20 +36,14 @@ Compara el hash del archivo descargado con el publicado en `SHA256SUMS.txt`:
 Get-FileHash .\pluma-*-setup-x64.exe -Algorithm SHA256
 ```
 
-## Política de firma de código (Code signing policy)
+## Firma de código
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+- **Microsoft Store:** la versión de la Store va firmada por Microsoft. El paquete MSIX se compila en GitHub Actions a partir del código de este repositorio (`scripts/package_msix.ps1`) y se sube sin firmar. Tras la certificación, la Store lo firma con su certificado. Por eso SmartScreen y el Control inteligente de aplicaciones de Windows 11 no la bloquean.
+- **GitHub Releases:** el instalador y el ZIP no están firmados.
 
-> La solicitud a SignPath Foundation está en trámite: las versiones publicadas hasta ahora aún no están firmadas.
+El motivo de esta elección está en la Decisión 017 de [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
-Los binarios firmados (`pluma.exe` y el instalador) se compilan exclusivamente en GitHub Actions a partir del código fuente de este repositorio, y cada firma requiere aprobación manual.
-
-**Roles del equipo:**
-
-- Autores y revisores (*Committers and reviewers*): [mbridge1eafit](https://github.com/mbridge1eafit)
-- Aprobadores (*Approvers*): [mbridge1eafit](https://github.com/mbridge1eafit)
-
-**Privacidad:** Pluma no recopila datos personales ni telemetría. La única conexión de red es la comprobación de actualizaciones contra la API pública de GitHub Releases (`api.github.com`) y la descarga del instalador desde GitHub cuando el usuario elige actualizar; la comprobación automática se desactiva en `Configuración > Preferencias…`. Aparte de eso, este programa no transfiere información a otros sistemas en red salvo que lo solicite expresamente el usuario o la persona que lo instala o lo utiliza.
+**Privacidad:** Pluma no recopila datos personales ni telemetría. La versión de la Store no se conecta a internet. Las versiones de GitHub solo consultan la API pública de GitHub Releases para buscar actualizaciones (se desactiva en `Configuración > Preferencias…`) y descargan el instalador cuando el usuario elige actualizar. Ver la [política de privacidad](store/privacy-policy.md).
 
 ## Actualizaciones
 
