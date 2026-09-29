@@ -31,6 +31,7 @@ BEGIN
             VALUE "FileDescription",  "Pluma - Editor Markdown nativo para Windows"
             VALUE "FileVersion",      PLUMA_VERSION_RC
             VALUE "InternalName",     "pluma"
+            VALUE "LegalCopyright",   "Copyright (C) 2026 Mauricio Bridge. Licensed under GNU GPL v3."
             VALUE "OriginalFilename", "pluma.exe"
             VALUE "ProductName",      "Pluma"
             VALUE "ProductVersion",   PLUMA_VERSION_RC
