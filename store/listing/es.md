@@ -7,10 +7,10 @@ Textos para **Partner Center > Pluma > Envío > Listados de la Store > Español*
 ## Nombre del producto
 
 ```
-Pluma
+Pluma Markdown Editor
 ```
 
-Debe coincidir con el nombre reservado en Partner Center y con `displayName` de `packaging/msix/identity.json`.
+Es el nombre reservado en Partner Center. Debe coincidir con `displayName` de `packaging/msix/identity.json`, que es el nombre que Windows muestra en Inicio.
 
 ## Descripción
 

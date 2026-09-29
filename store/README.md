@@ -18,6 +18,17 @@ Todo lo necesario para publicar Pluma en Microsoft Store: textos, imágenes y pa
 
 El paquete lo genera `scripts/package_msix.ps1` a partir de `packaging/msix/` (manifiesto e identidad).
 
+## Datos de la app en la Store
+
+| Dato | Valor |
+|---|---|
+| Nombre reservado | Pluma Markdown Editor |
+| Store ID | `9NJF1JRF4CXG` |
+| Enlace (funciona cuando la app está publicada) | <https://apps.microsoft.com/detail/9NJF1JRF4CXG> |
+| Enlace de protocolo | `ms-windows-store://pdp/?productid=9NJF1JRF4CXG` |
+| Package Family Name | `mBridge.PlumaMarkdownEditor_r27zwack9q2bm` |
+| AUMID de Pluma empaquetado | `mBridge.PlumaMarkdownEditor_r27zwack9q2bm!Pluma` |
+
 ## Primera publicación
 
 ### 1. Cuenta de desarrollador (gratis)
@@ -28,13 +39,11 @@ El paquete lo genera `scripts/package_msix.ps1` a partir de `packaging/msix/` (m
 
 ### 2. Reservar el nombre
 
-En Partner Center: **Aplicaciones y juegos > Nueva aplicación**, y reserva **Pluma**.
-
-Si está tomado, usa otro nombre (por ejemplo *Pluma Markdown*) y ponlo en `displayName` de `packaging/msix/identity.json` y en `listing/es.md`. El nombre del paquete y el de la reserva deben coincidir.
+En Partner Center: **Aplicaciones y juegos > Nueva aplicación**. El nombre reservado es **Pluma Markdown Editor**. Si cambias el nombre, actualízalo en `displayName` de `packaging/msix/identity.json` y en `listing/es.md`: el nombre del paquete y el de la reserva deben coincidir.
 
 ### 3. Copiar la identidad del paquete
 
-En **Pluma > Administración de productos > Identidad del producto** copia estos valores a `packaging/msix/identity.json`:
+En **Pluma Markdown Editor > Administración de productos > Identidad del producto** copia estos valores a `packaging/msix/identity.json` (ya están copiados):
 
 | Partner Center | `identity.json` |
 |---|---|
