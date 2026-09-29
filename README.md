@@ -4,24 +4,32 @@ Pluma es un editor de Markdown 100 % nativo para Windows diseñado para abrir en
 
 ## Descargas e Instalación
 
-Descarga la versión más reciente desde [GitHub Releases](https://github.com/mbridge1eafit/Pluma-Editor/releases). Hay dos formatos:
+Pluma se publica en **Microsoft Store** y en [GitHub Releases](https://github.com/mbridge1eafit/Pluma-Editor/releases).
 
-### Instalador (recomendado)
+### Microsoft Store (recomendado en Windows 11)
+
+La versión de la Store está firmada por Microsoft, así que el Control inteligente de aplicaciones de Windows 11 no la bloquea. Se actualiza sola desde la Store y abre los archivos `.md`, `.markdown` y `.mdown`. La guía de publicación y el material de la ficha están en [`store/`](store/README.md).
+
+### GitHub Releases
+
+Hay dos formatos:
+
+#### Instalador
 
 1. Descarga `pluma-vX.X.X-setup-x64.exe` y ejecútalo. No requiere permisos de administrador: se instala para el usuario actual en `%LOCALAPPDATA%\Programs\Pluma`.
 2. En el asistente puedes marcar **«Abrir los archivos Markdown (.md, .markdown, .mdown) con Pluma de forma predeterminada»** y crear un acceso directo en el escritorio. Si otra aplicación ya abría los `.md`, Windows exige confirmarlo en Configuración: la última página del asistente ofrece abrirla.
 3. Para actualizar a mano, ejecuta el instalador de la versión nueva: se instala encima de la anterior y conserva la carpeta, las opciones elegidas y tu configuración.
 4. Se desinstala desde **Configuración > Aplicaciones**; el desinstalador elimina también las asociaciones de archivos.
 
-Al no estar firmado digitalmente, SmartScreen puede mostrar una advertencia al abrir el instalador descargado: pulsa **Más información ➔ Ejecutar de todas formas**.
+Al no estar firmado digitalmente, SmartScreen puede mostrar una advertencia al abrir el instalador descargado: pulsa **Más información ➔ Ejecutar de todas formas**. El Control inteligente de aplicaciones de Windows 11 bloquea los ejecutables sin firmar que no conoce y no ofrece esa opción: en ese caso, instala Pluma desde Microsoft Store.
 
-### Versión portable (ZIP)
+#### Versión portable (ZIP)
 
 1. Descarga `pluma-vX.X.X-windows-x64.zip`.
 2. **Desbloquear en Windows:** clic derecho sobre el `.zip` ➔ **Propiedades** ➔ marca **"Desbloquear"** (*Unblock*) ➔ **Aceptar**, o por PowerShell: `Unblock-File .\pluma-*-windows-x64.zip`.
 3. Descomprime y ejecuta `pluma.exe` (no requiere instalación).
 
-### Verificar la integridad (SHA-256)
+#### Verificar la integridad (SHA-256)
 
 Compara el hash del archivo descargado con el publicado en `SHA256SUMS.txt`:
 ```powershell
@@ -50,7 +58,7 @@ Pluma comprueba en segundo plano, como máximo una vez al día, si hay una versi
 - **Actualizar ahora:** descarga el instalador, verifica su SHA-256 con el `SHA256SUMS.txt` publicado, pide guardar el documento, cierra Pluma, instala la versión nueva en modo silencioso y vuelve a abrir Pluma con el mismo documento.
 - **Recordármelo más tarde** u **Omitir esta versión** (no vuelve a avisar de esa versión).
 
-La actualización automática requiere la copia instalada con el instalador; en la versión portable el aviso abre la página de descarga. La comprobación automática se desactiva en `Configuración > Preferencias…`.
+La actualización automática requiere la copia instalada con el instalador; en la versión portable el aviso abre la página de descarga. La comprobación automática se desactiva en `Configuración > Preferencias…`. La versión de Microsoft Store no hace esta comprobación: la actualiza la Store.
 
 ## Requisitos de compilación
 
@@ -84,6 +92,13 @@ El instalador se genera con [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`
 .\scripts\package_release.ps1            # dist\: ZIP portable, instalador y SHA256SUMS.txt
 ```
 La versión se define solo en `project(VERSION)` de `CMakeLists.txt` (y en `res/pluma.manifest`).
+
+### Paquete de Microsoft Store (MSIX)
+
+```powershell
+.\scripts\package_msix.ps1             # dist\pluma-vX.Y.Z-x64.msix, sin firmar: la Store lo firma
+```
+Usa `makeappx` y `makepri` del Windows SDK. La identidad del paquete se toma de `packaging/msix/identity.json` (valores de Partner Center); ver [`store/README.md`](store/README.md).
 
 ### Compilación en Debug
 ```powershell
