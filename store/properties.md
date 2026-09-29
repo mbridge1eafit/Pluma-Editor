@@ -7,10 +7,10 @@ Valores para las secciones **Precio y disponibilidad** y **Propiedades** del env
 | Campo | Valor |
 |---|---|
 | Mercados | Todos los mercados (Pluma no tiene restricciones legales ni de contenido). |
-| Visibilidad (primer envío) | **Público privado** (*Private audience*), con tu cuenta Microsoft en un grupo de clientes conocidos. Así pruebas la versión firmada por la Store antes de hacerla pública. |
+| Visibilidad (primer envío) | **Audiencia pública, disponible pero no reconocible: solo con vínculo directo.** Se instala con el enlace de la Store y no aparece en búsquedas: así pruebas la versión firmada antes de hacerla visible, sin crear grupos de usuarios. |
 | Visibilidad (después) | **Público**, disponible y visible en la Store. |
 | Programación | Publicar en cuanto pase la certificación. |
-| Precio base | **Gratis**. |
+| Precio base | **Gratis**: divisa `USD - Estados Unidos`, precio de venta minorista `0`. |
 | Prueba gratuita | No. |
 | Descuentos (ventas) | Ninguno. |
 
@@ -20,8 +20,8 @@ Valores para las secciones **Precio y disponibilidad** y **Propiedades** del env
 |---|---|
 | Categoría | **Productividad** |
 | Categoría secundaria | **Herramientas para desarrolladores** |
-| ¿Accede, recopila o transmite información personal? | **No**. La versión de la Store no se conecta a internet. Ver `privacy-policy.md`. |
-| URL de la directiva de privacidad | `https://github.com/mbridge1eafit/Pluma-Editor/blob/master/store/privacy-policy.md` (opcional con la respuesta «No», pero conviene incluirla). |
+| ¿Accede, recopila o transmite información personal? | **Sí**. Pluma no recopila ni envía nada, pero Partner Center exige la URL de privacidad por la capacidad `runFullTrust`, y con «No» no hay dónde ponerla. «Sí» es defendible: con plena confianza Pluma tiene acceso a los documentos que abre el usuario. La política aclara que no recopila datos. |
+| URL de la directiva de privacidad | `https://github.com/mbridge1eafit/Pluma-Editor/blob/master/store/privacy-policy.md` |
 | Sitio web | `https://github.com/mbridge1eafit/Pluma-Editor` |
 | Información de contacto de soporte | `https://github.com/mbridge1eafit/Pluma-Editor/issues` |
 | Modo de visualización | Ninguna casilla: no es una aplicación de realidad mixta. |

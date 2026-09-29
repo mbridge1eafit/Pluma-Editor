@@ -78,7 +78,7 @@ En **Pluma > Envío 1**, completa cada sección:
 
 | Sección | Qué poner |
 |---|---|
-| Precio y disponibilidad | `properties.md` > *Precio y disponibilidad*. En el primer envío conviene elegir público privado, para probar. |
+| Precio y disponibilidad | `properties.md` > *Precio y disponibilidad*. En el primer envío conviene elegir *solo vínculo directo*, para probar. |
 | Propiedades | `properties.md` > *Propiedades*. |
 | Clasificaciones por edad | `age-rating.md`. |
 | Paquetes | Arrastra `pluma-vX.Y.Z-x64.msix`. Partner Center valida el manifiesto y detecta el idioma (español). |
@@ -89,7 +89,7 @@ Pulsa **Enviar a la Store**. La certificación suele tardar desde unas horas has
 
 ### 7. Probar y hacer pública
 
-1. Si elegiste público privado, instala Pluma desde el enlace de la Store (*Identidad del producto > URL*) en este portátil. Comprueba que el Control inteligente de aplicaciones ya no lo bloquea, que los `.md` se abren con doble clic y que no aparece *Ayuda > Buscar actualizaciones*.
+1. Con la visibilidad *solo vínculo directo*, instala Pluma desde el enlace de la Store (*Identidad del producto > URL*) en este portátil. Comprueba que el Control inteligente de aplicaciones ya no lo bloquea, que los `.md` se abren con doble clic y que no aparece *Ayuda > Buscar actualizaciones*.
 2. Crea un envío nuevo cambiando la visibilidad a **Público**.
 
 ## Cada versión nueva
