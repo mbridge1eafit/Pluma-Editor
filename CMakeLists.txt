@@ -37,6 +37,12 @@ if(MSVC)
     endif()
 endif()
 
+# No C++20 modules are used. Scanning for them adds a step per source, and on a localized MSVC
+# ("Nota: inclusión del archivo:") the scan prints its /showIncludes notes in UTF-8 while CMake
+# expects the console code page: Ninja then lost header dependencies, so editing a header did
+# not rebuild the files that include it.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 # ==============================================================================
 # Third-party Dependencies (md4c, scintilla, lexilla)
 # ==============================================================================
