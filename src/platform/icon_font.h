@@ -12,7 +12,7 @@ namespace Pluma::Platform {
 // Glyphs shared by Segoe Fluent Icons (Windows 11) and Segoe MDL2 Assets (Windows 10).
 namespace Glyph {
 constexpr wchar_t kNew[] = L"";
-constexpr wchar_t kOpen[] = L"";
+constexpr wchar_t kOpen[] = L"";
 constexpr wchar_t kSave[] = L"";
 constexpr wchar_t kUndo[] = L"";
 constexpr wchar_t kRedo[] = L"";
@@ -23,6 +23,7 @@ constexpr wchar_t kFind[] = L"";
 constexpr wchar_t kSettings[] = L"";
 constexpr wchar_t kFolder[] = L"";
 constexpr wchar_t kFolderClosed[] = L"";
+constexpr wchar_t kExplorer[] = L"";
 constexpr wchar_t kList[] = L"";
 constexpr wchar_t kRefresh[] = L"";
 constexpr wchar_t kClose[] = L"";
