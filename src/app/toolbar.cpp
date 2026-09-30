@@ -119,7 +119,7 @@ std::vector<Toolbar::Item> Toolbar::MainItems() {
         separator,
         button(IDM_EDIT_FIND, kFind, L"Buscar... (Ctrl+F)"),
         separator,
-        toggle(IDM_VIEW_EXPLORER_PANEL, kFolder, L"Explorador de archivos (Ctrl+Shift+F)"),
+        toggle(IDM_VIEW_EXPLORER_PANEL, kExplorer, L"Explorador de archivos (Ctrl+Shift+F)"),
         toggle(IDM_VIEW_OUTLINE_PANEL, kList, L"Panel de encabezados (Ctrl+Shift+E)"),
         separator,
         segment(IDM_VIEW_EDITOR_ONLY, L"Editor", L"Solo editor (Ctrl+1)"),
