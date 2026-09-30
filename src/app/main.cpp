@@ -114,7 +114,7 @@ using ViewMode = Pluma::Config::ViewLayout;
 // Draggable dividers of the main window.
 enum class Divider {
     None,
-    Explorer, // Between the file explorer panel and whatever comes next
+    Explorer, // Between the document and the file explorer panel (right edge)
     Outline,  // Between the headings panel and the editor
     Split     // Between the editor and the preview
 };
@@ -614,19 +614,22 @@ public:
         const int dividerW = Pluma::Platform::ScaleForDpi(m_splitterWidth, m_dpi);
         const int minContentW = Pluma::Platform::ScaleForDpi(160, m_dpi);
         const int minPanelW = Pluma::Platform::ScaleForDpi(80, m_dpi);
+        // The document spans [contentX, contentRight): the headings panel sits to its left, the
+        // file explorer panel to its right.
         int contentX = 0;
+        int contentRight = w;
         if (m_settings.showExplorer) {
             // Side panels never squeeze the document below a usable width.
-            const int maxWidth = w - contentX - dividerW - minContentW;
+            const int maxWidth = contentRight - contentX - dividerW - minContentW;
             const int explorerW = (std::min)(Pluma::Platform::ScaleForDpi(m_settings.explorerWidth, m_dpi), maxWidth);
             if (explorerW >= minPanelW) {
-                layout.explorer = RECT{contentX, y, contentX + explorerW, y + h};
-                layout.explorerDivider = RECT{contentX + explorerW, y, contentX + explorerW + dividerW, y + h};
-                contentX += explorerW + dividerW;
+                layout.explorer = RECT{contentRight - explorerW, y, contentRight, y + h};
+                layout.explorerDivider = RECT{contentRight - explorerW - dividerW, y, contentRight - explorerW, y + h};
+                contentRight -= explorerW + dividerW;
             }
         }
         if (m_settings.showOutline) {
-            const int maxWidth = w - contentX - dividerW - minContentW;
+            const int maxWidth = contentRight - contentX - dividerW - minContentW;
             const int outlineW = (std::min)(Pluma::Platform::ScaleForDpi(m_settings.outlineWidth, m_dpi), maxWidth);
             if (outlineW >= minPanelW) {
                 layout.outline = RECT{contentX, y, contentX + outlineW, y + h};
@@ -634,7 +637,7 @@ public:
                 contentX += outlineW + dividerW;
             }
         }
-        const int contentW = (std::max)(1, w - contentX);
+        const int contentW = (std::max)(1, contentRight - contentX);
 
         switch (m_viewMode) {
         case ViewMode::EditorOnly:
@@ -2074,7 +2077,8 @@ private:
             m_settings.outlineWidth =
                 (std::clamp)(logical, Pluma::Config::kMinOutlineWidth, Pluma::Config::kMaxOutlineWidth);
         } else if (m_dragDivider == Divider::Explorer) {
-            const int logical = MulDiv(mouseX - layout.explorer.left - dividerW / 2, 96, static_cast<int>(m_dpi));
+            // The explorer is anchored to the right edge: dragging left widens it.
+            const int logical = MulDiv(layout.explorer.right - mouseX - dividerW / 2, 96, static_cast<int>(m_dpi));
             m_settings.explorerWidth =
                 (std::clamp)(logical, Pluma::Config::kMinExplorerWidth, Pluma::Config::kMaxExplorerWidth);
         }
