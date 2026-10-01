@@ -7,8 +7,8 @@ Valores para las secciones **Precio y disponibilidad** y **Propiedades** del env
 | Campo | Valor |
 |---|---|
 | Mercados | Todos los mercados (Pluma no tiene restricciones legales ni de contenido). |
-| Visibilidad (primer envío) | **Audiencia pública, disponible pero no reconocible: solo con vínculo directo.** Se instala con el enlace de la Store y no aparece en búsquedas: así pruebas la versión firmada antes de hacerla visible, sin crear grupos de usuarios. |
-| Visibilidad (después) | **Público**, disponible y visible en la Store. |
+| Visibilidad (primer envío, v0.7.1) | **Audiencia pública, disponible pero no reconocible: solo con vínculo directo.** Se instala con el enlace de la Store y no aparece en búsquedas: así pruebas la versión firmada antes de hacerla visible, sin crear grupos de usuarios. |
+| Visibilidad (desde el envío 2, v0.8.0) | **Audiencia pública, disponible y reconocible en Microsoft Store**: aparece en las búsquedas y listas de la Store. |
 | Programación | Publicar en cuanto pase la certificación. |
 | Precio base | **Gratis**: divisa `USD - Estados Unidos`, precio de venta minorista `0`. |
 | Prueba gratuita | No. |
