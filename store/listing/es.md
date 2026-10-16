@@ -22,7 +22,7 @@ Pluma es un editor de Markdown nativo para Windows: rápido, ligero y sin distra
 A diferencia de otros editores, Pluma no incluye un navegador por dentro. Está escrito en C++ con las tecnologías de Windows (Direct2D y DirectWrite), así que arranca en un instante, ocupa unos pocos megabytes y se siente como una aplicación del sistema.
 
 ESCRIBE CON VISTA PREVIA EN VIVO
-Trabaja en vista dividida, solo en el editor o solo en la vista previa. El desplazamiento se sincroniza entre las dos partes, y un doble clic en la vista previa te lleva al punto exacto del texto. Las casillas de las listas de tareas se marcan con un clic directamente en la vista previa.
+Trabaja en vista dividida, solo en el editor o solo en la vista previa. El desplazamiento se sincroniza entre las dos partes. En la vista previa puedes seleccionar y copiar texto como en cualquier documento, y con Ctrl+clic vas al punto exacto del texto para editarlo. Las casillas de las listas de tareas se marcan con un clic directamente en la vista previa.
 
 MARKDOWN COMPLETO
 Compatible con CommonMark y GitHub Flavored Markdown: encabezados, listas, listas de tareas, tablas, citas, bloques de código, enlaces, imágenes, texto tachado y emojis.

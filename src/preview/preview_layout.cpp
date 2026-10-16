@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cwctype>
 #include <iterator>
 
 #include "../diagram/mermaid.h"
@@ -36,6 +37,12 @@ constexpr D2D1_COLOR_F Hex(uint32_t rgb) {
         static_cast<float>((rgb >> 8) & 0xFF) / 255.0f,
         static_cast<float>(rgb & 0xFF) / 255.0f,
         1.0f};
+}
+
+constexpr D2D1_COLOR_F HexAlpha(uint32_t rgb, float alpha) {
+    D2D1_COLOR_F c = Hex(rgb);
+    c.a = alpha;
+    return c;
 }
 
 std::wstring Utf8ToUtf16(std::string_view utf8) {
@@ -144,6 +151,7 @@ struct LayoutEngine::SpanRange {
 
 struct LayoutEngine::RichText {
     ComPtr<IDWriteTextLayout> layout;
+    std::wstring text;
     std::vector<SpanRange> ranges;
     std::vector<EffectRange> effects;
     std::vector<SourceSegment> sourceMap;
@@ -240,6 +248,7 @@ PreviewThemeColors PreviewThemeColors::Light() {
     c.tableStripeBg = Hex(0xFAFBFC);
     c.accent = Hex(0x0969DA);
     c.accentText = Hex(0xFFFFFF);
+    c.selection = HexAlpha(0x0969DA, 0.24f);
     c.diagram = Diagram::Palette::Light();
     return c;
 }
@@ -264,6 +273,7 @@ PreviewThemeColors PreviewThemeColors::Dark() {
     c.tableStripeBg = Hex(0x222223);
     c.accent = Hex(0x4493F8);
     c.accentText = Hex(0x0D1117);
+    c.selection = HexAlpha(0x4493F8, 0.36f);
     c.diagram = Diagram::Palette::Dark();
     return c;
 }
@@ -383,6 +393,7 @@ LayoutEngine::RichText LayoutEngine::BuildRichText(const std::vector<Markdown::S
     FlattenSpans(spans, kStyleNone, std::string(), text, rich.ranges, rich.sourceMap);
 
     rich.layout = CreatePlainLayout(text, style, (std::max)(kMinTextWidth, maxWidth));
+    rich.text = std::move(text);
     if (!rich.layout) {
         return rich;
     }
@@ -468,6 +479,7 @@ void LayoutEngine::ComputeLayout(const Markdown::BlockTree& tree, float contentW
     m_dpi = dpi;
     m_blocks.clear();
     m_syncBlocks.clear();
+    m_textUnits.clear();
     m_anchors.clear();
     m_slugCounts.clear();
     m_totalHeight = 0.0f;
@@ -499,6 +511,7 @@ void LayoutEngine::ComputeLayout(const Markdown::BlockTree& tree, float contentW
             m_syncBlocks.push_back(i);
         }
     }
+    BuildTextUnits();
 
     std::erase_if(m_diagramCache, [](const auto& item) { return !item.second.used; });
 }
@@ -594,6 +607,7 @@ void LayoutEngine::LayoutHeading(const Markdown::Block& block, const Context& ct
     lb.textLayout = std::move(rich.layout);
     lb.effects = std::move(rich.effects);
     lb.sourceMap = std::move(rich.sourceMap);
+    lb.text = std::move(rich.text);
     m_blocks.push_back(std::move(lb));
 
     currentY += height;
@@ -620,6 +634,7 @@ void LayoutEngine::LayoutParagraph(const Markdown::Block& block, const Context& 
     lb.textLayout = std::move(rich.layout);
     lb.effects = std::move(rich.effects);
     lb.sourceMap = std::move(rich.sourceMap);
+    lb.text = std::move(rich.text);
     m_blocks.push_back(std::move(lb));
 
     currentY += height;
@@ -735,6 +750,7 @@ void LayoutEngine::LayoutListItem(const Markdown::Block& block, const Context& c
     lb.textLayout = std::move(rich.layout);
     lb.effects = std::move(rich.effects);
     lb.sourceMap = std::move(rich.sourceMap);
+    lb.text = std::move(rich.text);
     m_blocks.push_back(std::move(lb));
     currentY += height;
 
@@ -789,6 +805,7 @@ void LayoutEngine::LayoutCodeBlock(const Markdown::Block& block, const Context& 
 
     const float textWidth = (std::max)(kMinTextWidth, ctx.width - 2.0f * kCodePaddingX);
     lb.textLayout = CreatePlainLayout(code, m_styleCode, textWidth);
+    lb.text = std::move(code);
 
     float textHeight = m_styleCode.lineHeight;
     if (lb.textLayout) {
@@ -1084,6 +1101,7 @@ void LayoutEngine::LayoutTable(const Markdown::Block& block, const Context& ctx,
                 cell.textLayout = std::move(info.rich.layout);
                 cell.effects = std::move(info.rich.effects);
                 cell.sourceMap = std::move(info.rich.sourceMap);
+                cell.text = std::move(info.rich.text);
             }
             cellX += lb.tableColWidths[c] + 1.0f;
         }
@@ -1198,6 +1216,263 @@ void LayoutEngine::SetTaskChecked(int taskMarkOffset, bool checked) {
             return;
         }
     }
+}
+
+namespace {
+
+enum class CharClass { Space, Word, Other };
+
+CharClass ClassOf(wchar_t c) {
+    if (c == L'\x2028' || c == L'\xA0' || std::iswspace(c)) return CharClass::Space;
+    // Surrogates, combining marks, variation selectors and ZWJ keep words and emoji whole.
+    if (c == L'_' || (c >= 0xD800 && c <= 0xDFFF) || (c >= 0x0300 && c <= 0x036F) || c == 0x200D || c == 0xFE0F ||
+        IsCharAlphaNumericW(c)) {
+        return CharClass::Word;
+    }
+    return CharClass::Other;
+}
+
+// First and last source lines of a text unit: a table cell is its row's line.
+std::pair<int, int> UnitLines(const LayoutBlock& block, const TextUnit& unit) {
+    if (unit.row < 0) return {block.startLine, block.endLine};
+    // GFM rows are single source lines, with the delimiter row after the header.
+    const int line = block.startLine + unit.row + (unit.row >= block.tableHeaderRows ? 1 : 0);
+    return {line, line};
+}
+
+} // namespace
+
+std::pair<UINT32, UINT32> WordBounds(std::wstring_view text, UINT32 index) {
+    const auto size = static_cast<UINT32>(text.size());
+    if (size == 0) return {0, 0};
+    index = (std::min)(index, size - 1);
+    const CharClass cls = ClassOf(text[index]);
+    UINT32 start = index;
+    while (start > 0 && ClassOf(text[start - 1]) == cls) --start;
+    UINT32 end = index + 1;
+    while (end < size && ClassOf(text[end]) == cls) ++end;
+    return {start, end};
+}
+
+LayoutEngine::UnitView LayoutEngine::ViewOf(const TextUnit& unit) const {
+    UnitView view;
+    const LayoutBlock& block = m_blocks[unit.block];
+    if (unit.row >= 0) {
+        const TableCellLayout& cell = block.tableRows[static_cast<size_t>(unit.row)][static_cast<size_t>(unit.col)];
+        view.layout = cell.textLayout.Get();
+        view.origin = cell.textOrigin;
+        view.text = &cell.text;
+        view.sourceMap = &cell.sourceMap;
+        view.area = cell.rect;
+    } else {
+        view.layout = block.textLayout.Get();
+        view.origin = block.textOrigin;
+        view.text = &block.text;
+        view.sourceMap = &block.sourceMap;
+        view.area = block.bounds;
+    }
+    return view;
+}
+
+void LayoutEngine::BuildTextUnits() {
+    m_textUnits.clear();
+    for (size_t i = 0; i < m_blocks.size(); ++i) {
+        const LayoutBlock& b = m_blocks[i];
+        if (b.isQuoteBar || b.diagram) continue;
+        if (b.type == Markdown::BlockType::Table) {
+            for (size_t r = 0; r < b.tableRows.size(); ++r) {
+                for (size_t c = 0; c < b.tableRows[r].size(); ++c) {
+                    if (b.tableRows[r][c].textLayout) {
+                        m_textUnits.push_back(TextUnit{i, static_cast<int>(r), static_cast<int>(c)});
+                    }
+                }
+            }
+        } else if (b.textLayout) {
+            m_textUnits.push_back(TextUnit{i});
+        }
+    }
+}
+
+bool LayoutEngine::HitTestUnit(float x, float y, size_t& unit, UINT32& caret, UINT32& character) const {
+    if (m_textUnits.empty()) return false;
+
+    // Nearest unit: vertical distance first, then horizontal (cells of the same row).
+    float bestDy = FLT_MAX;
+    float bestDx = FLT_MAX;
+    unit = 0;
+    for (size_t i = 0; i < m_textUnits.size(); ++i) {
+        const D2D1_RECT_F area = ViewOf(m_textUnits[i]).area;
+        const float dy = y < area.top ? area.top - y : (y > area.bottom ? y - area.bottom : 0.0f);
+        if (dy > bestDy) continue;
+        const float dx = x < area.left ? area.left - x : (x > area.right ? x - area.right : 0.0f);
+        if (dy < bestDy || dx < bestDx) {
+            unit = i;
+            bestDy = dy;
+            bestDx = dx;
+            if (dy == 0.0f && dx == 0.0f) break;
+        }
+    }
+
+    const UnitView view = ViewOf(m_textUnits[unit]);
+    const auto length = static_cast<UINT32>(view.text->size());
+    BOOL isTrailing = FALSE;
+    BOOL isInside = FALSE;
+    DWRITE_HIT_TEST_METRICS m{};
+    caret = 0;
+    character = 0;
+    if (view.layout &&
+        SUCCEEDED(view.layout->HitTestPoint(x - view.origin.x, y - view.origin.y, &isTrailing, &isInside, &m))) {
+        character = m.textPosition;
+        caret = m.textPosition + (isTrailing ? m.length : 0);
+    }
+    // An empty text is laid out as " ": no position past its (empty) end.
+    caret = (std::min)(caret, length);
+    character = (std::min)(character, length);
+    return true;
+}
+
+TextPosition LayoutEngine::DocumentEnd() const {
+    if (m_textUnits.empty()) return {};
+    const size_t last = m_textUnits.size() - 1;
+    return TextPosition{last, static_cast<UINT32>(ViewOf(m_textUnits[last]).text->size())};
+}
+
+TextPosition LayoutEngine::HitTestTextPosition(float x, float y) const {
+    size_t unit = 0;
+    UINT32 caret = 0;
+    UINT32 character = 0;
+    if (!HitTestUnit(x, y, unit, caret, character)) return {};
+    return TextPosition{unit, caret};
+}
+
+bool LayoutEngine::IsOverText(float x, float y) const {
+    for (const TextUnit& unit : m_textUnits) {
+        const UnitView view = ViewOf(unit);
+        if (y < view.area.top || y > view.area.bottom || x < view.area.left || x > view.area.right) continue;
+        BOOL isTrailing = FALSE;
+        BOOL isInside = FALSE;
+        DWRITE_HIT_TEST_METRICS m{};
+        return view.layout && !view.text->empty() &&
+               SUCCEEDED(view.layout->HitTestPoint(x - view.origin.x, y - view.origin.y, &isTrailing, &isInside, &m)) &&
+               isInside;
+    }
+    return false;
+}
+
+TextRange LayoutEngine::WordAt(float x, float y) const {
+    size_t unit = 0;
+    UINT32 caret = 0;
+    UINT32 character = 0;
+    if (!HitTestUnit(x, y, unit, caret, character)) return {};
+    const auto [start, end] = WordBounds(*ViewOf(m_textUnits[unit]).text, character);
+    return TextRange{{unit, start}, {unit, end}};
+}
+
+TextRange LayoutEngine::UnitAt(float x, float y) const {
+    size_t unit = 0;
+    UINT32 caret = 0;
+    UINT32 character = 0;
+    if (!HitTestUnit(x, y, unit, caret, character)) return {};
+    return TextRange{{unit, 0}, {unit, static_cast<UINT32>(ViewOf(m_textUnits[unit]).text->size())}};
+}
+
+void LayoutEngine::GetSelectionRects(TextPosition a, TextPosition b, float top, float bottom,
+                                     std::vector<SelectionRect>& out) const {
+    out.clear();
+    if (m_textUnits.empty()) return;
+    if (b < a) std::swap(a, b);
+    const size_t last = (std::min)(b.unit, m_textUnits.size() - 1);
+
+    std::vector<DWRITE_HIT_TEST_METRICS> metrics;
+    for (size_t u = a.unit; u <= last; ++u) {
+        const UnitView view = ViewOf(m_textUnits[u]);
+        if (!view.layout || view.area.bottom < top || view.area.top > bottom) continue;
+        const auto length = static_cast<UINT32>(view.text->size());
+        const UINT32 start = u == a.unit ? (std::min)(a.offset, length) : 0;
+        const UINT32 end = u == b.unit ? (std::min)(b.offset, length) : length;
+        if (end <= start) continue;
+
+        UINT32 count = 0;
+        view.layout->HitTestTextRange(start, end - start, view.origin.x, view.origin.y, nullptr, 0, &count);
+        if (count == 0) continue;
+        metrics.resize(count);
+        if (FAILED(view.layout->HitTestTextRange(start, end - start, view.origin.x, view.origin.y, metrics.data(),
+                                                 count, &count))) {
+            continue;
+        }
+        for (UINT32 i = 0; i < count; ++i) {
+            const DWRITE_HIT_TEST_METRICS& m = metrics[i];
+            // Clipped like the text itself (table cells, code blocks).
+            const D2D1_RECT_F r = D2D1::RectF((std::max)(m.left, view.area.left), m.top,
+                                              (std::min)(m.left + m.width, view.area.right), m.top + m.height);
+            if (r.right > r.left) {
+                out.push_back(SelectionRect{m_textUnits[u].block, r});
+            }
+        }
+    }
+}
+
+std::wstring LayoutEngine::GetSelectedText(TextPosition a, TextPosition b) const {
+    std::wstring out;
+    if (m_textUnits.empty()) return out;
+    if (b < a) std::swap(a, b);
+    const size_t last = (std::min)(b.unit, m_textUnits.size() - 1);
+
+    for (size_t u = a.unit; u <= last; ++u) {
+        const TextUnit& unit = m_textUnits[u];
+        if (u > a.unit) {
+            // Cells of a row are tab-separated and list items stay together, like a browser copies them.
+            const TextUnit& prev = m_textUnits[u - 1];
+            const bool sameTable = prev.block == unit.block && unit.row >= 0;
+            const bool listItems = m_blocks[prev.block].type == Markdown::BlockType::ListItem &&
+                                   m_blocks[unit.block].type == Markdown::BlockType::ListItem;
+            if (sameTable && prev.row == unit.row) {
+                out += L'\t';
+            } else if (sameTable || listItems) {
+                out += L"\r\n";
+            } else {
+                out += L"\r\n\r\n";
+            }
+        }
+        const std::wstring& text = *ViewOf(unit).text;
+        const auto length = static_cast<UINT32>(text.size());
+        const UINT32 start = u == a.unit ? (std::min)(a.offset, length) : 0;
+        const UINT32 end = u == b.unit ? (std::min)(b.offset, length) : length;
+        for (UINT32 i = start; i < end; ++i) {
+            const wchar_t c = text[i];
+            if (c == L'\n' || c == L'\x2028') {
+                out += L"\r\n";
+            } else if (c != L'\r') {
+                out += c;
+            }
+        }
+    }
+    return out;
+}
+
+SourceHit LayoutEngine::SourceAt(TextPosition pos, bool trailing) const {
+    SourceHit hit;
+    const TextUnit& unit = m_textUnits[pos.unit];
+    const auto [first, last] = UnitLines(m_blocks[unit.block], unit);
+    hit.line = trailing ? last : first;
+    ResolveSource(*ViewOf(unit).sourceMap, pos.offset, trailing, hit);
+    return hit;
+}
+
+SourceSelection LayoutEngine::GetSourceSelection(TextPosition a, TextPosition b) const {
+    SourceSelection sel;
+    if (m_textUnits.empty()) return sel;
+    if (b < a) std::swap(a, b);
+    a.unit = (std::min)(a.unit, m_textUnits.size() - 1);
+    b.unit = (std::min)(b.unit, m_textUnits.size() - 1);
+
+    sel.start = SourceAt(a, false);
+    sel.end = SourceAt(b, true);
+    sel.startLine = UnitLines(m_blocks[m_textUnits[a.unit].block], m_textUnits[a.unit]).first;
+    sel.endLine = UnitLines(m_blocks[m_textUnits[b.unit].block], m_textUnits[b.unit]).second;
+    const auto bLength = static_cast<UINT32>(ViewOf(m_textUnits[b.unit]).text->size());
+    sel.wholeLines = a.unit != b.unit || (a.offset == 0 && b.offset >= bLength) || !sel.start.exact || !sel.end.exact;
+    return sel;
 }
 
 float LayoutEngine::GetAnchorY(std::string_view slug) const {

@@ -7,11 +7,11 @@
 #include <wrl/client.h>
 
 #include <algorithm>
-#include <cstring>
 #include <memory>
 #include <string_view>
 #include <utility>
 
+#include "../platform/clipboard.h"
 #include "../platform/dpi.h"
 #include "../platform/icon_font.h"
 
@@ -161,21 +161,6 @@ void ShowInExplorer(const std::filesystem::path& path) {
         SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
         ILFree(pidl);
     }
-}
-
-void CopyToClipboard(HWND owner, const std::wstring& text) {
-    if (!OpenClipboard(owner)) return;
-    EmptyClipboard();
-    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
-        void* target = GlobalLock(memory);
-        if (target) {
-            std::memcpy(target, text.c_str(), bytes);
-            GlobalUnlock(memory);
-        }
-        if (!target || !SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
-    }
-    CloseClipboard();
 }
 
 void FillRounded(HDC hdc, const RECT& rc, int radius, COLORREF fill) {
@@ -717,7 +702,7 @@ void FileExplorerPanel::ShowItemMenu(LPARAM screenPoint) {
         ShowInExplorer(path);
         break;
     case kCopyPath:
-        CopyToClipboard(m_hwnd, path.wstring());
+        Platform::CopyTextToClipboard(m_hwnd, path.wstring());
         break;
     default:
         break;

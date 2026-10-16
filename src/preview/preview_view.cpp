@@ -6,9 +6,11 @@
 #include <array>
 #include <cmath>
 #include <cctype>
+#include <cstdlib>
 #include <cwctype>
 
 #include "../markdown/slug.h"
+#include "../platform/clipboard.h"
 
 namespace Pluma::Preview {
 
@@ -16,6 +18,8 @@ namespace {
 
 constexpr float kLineScrollDip = 40.0f;       // Arrow keys / scrollbar arrows
 constexpr float kWheelLineDip = 24.0f;        // One wheel "line"
+constexpr UINT_PTR kAutoScrollTimer = 1;      // Selection dragged above or below the view
+constexpr UINT kAutoScrollIntervalMs = 30;
 
 std::wstring Utf8ToUtf16(std::string_view utf8) {
     if (utf8.empty()) return {};
@@ -92,6 +96,7 @@ bool PreviewView::Create(HWND hParent, HINSTANCE hInstance, int x, int y, int wi
 
     m_hHandCursor = LoadCursorW(nullptr, IDC_HAND);
     m_hArrowCursor = LoadCursorW(nullptr, IDC_ARROW);
+    m_hTextCursor = LoadCursorW(nullptr, IDC_IBEAM);
 
     m_hwnd = CreateWindowExW(
         0,
@@ -186,6 +191,20 @@ LRESULT PreviewView::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_KEYDOWN: {
+        if (GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0) { // Not AltGr
+            if (wParam == 'A') {
+                SelectAll();
+                return 0;
+            }
+            if (wParam == 'C' || wParam == VK_INSERT) {
+                CopySelection();
+                return 0;
+            }
+        }
+        if (wParam == VK_ESCAPE && HasSelection()) {
+            ClearSelection();
+            return 0;
+        }
         switch (wParam) {
         case VK_UP:    ScrollTo(m_scrollPos - kLineScrollDip); return 0;
         case VK_DOWN:  ScrollTo(m_scrollPos + kLineScrollDip); return 0;
@@ -204,47 +223,86 @@ LRESULT PreviewView::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, m_hwnd, 0};
             m_trackingMouse = TrackMouseEvent(&tme) != FALSE;
         }
-        UpdateHover(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
-                    PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))));
+        const int x = GET_X_LPARAM(lParam);
+        const int y = GET_Y_LPARAM(lParam);
+        if (m_mouseDown) {
+            if (!m_dragging && (std::abs(x - m_downPoint.x) > GetSystemMetrics(SM_CXDRAG) ||
+                                std::abs(y - m_downPoint.y) > GetSystemMetrics(SM_CYDRAG))) {
+                m_dragging = true;
+                m_pressedUrl.clear(); // A drag that starts on a link selects instead of opening it
+                SetCursor(m_hTextCursor); // No WM_SETCURSOR while the mouse is captured
+            }
+            if (m_dragging) {
+                ExtendSelection(PxToDip(static_cast<float>(x)), PxToDip(static_cast<float>(y)));
+                UpdateAutoScroll(y);
+            }
+            return 0;
+        }
+        UpdateHover(PxToDip(static_cast<float>(x)), PxToDip(static_cast<float>(y)));
         return 0;
     }
 
     case WM_MOUSELEAVE:
         m_trackingMouse = false;
-        SetHoverLink(nullptr);
+        if (!m_mouseDown) SetHoverLink(nullptr);
         return 0;
 
     case WM_SETCURSOR:
         if (LOWORD(lParam) == HTCLIENT) {
-            SetCursor(m_hoverLink || m_hoverTask ? m_hHandCursor : m_hArrowCursor);
+            SetCursor(CursorForHover());
             return TRUE;
         }
         break;
 
-    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDOWN: {
         SetFocus(m_hwnd);
+        const float x = PxToDip(static_cast<float>(GET_X_LPARAM(lParam)));
+        const float y = PxToDip(static_cast<float>(GET_Y_LPARAM(lParam)));
         // A click can arrive without a previous WM_MOUSEMOVE (pen, touch, inactive window).
-        UpdateHover(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
-                    PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))));
+        UpdateHover(x, y);
+        m_pressedUrl.clear();
+        m_pressedTaskOffset = -1;
+        if (m_hoverTask) {
+            m_pressedTaskOffset = m_hoverTask->taskMarkOffset;
+            return 0;
+        }
+        if (wParam & MK_CONTROL) {
+            EditAt(x, y, false); // Ctrl+click edits, even on a link
+            return 0;
+        }
         m_pressedUrl = m_hoverUrl;
-        m_pressedTaskOffset = m_hoverTask ? m_hoverTask->taskMarkOffset : -1;
+        const bool triple = IsTripleClick(lParam);
+        BeginSelection(x, y, triple ? SelectMode::Unit : SelectMode::Character, (wParam & MK_SHIFT) != 0);
+        m_downPoint = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        StartMouseSelection();
+        m_dragging = triple || (wParam & MK_SHIFT) != 0;
         return 0;
+    }
 
-    case WM_LBUTTONDBLCLK:
-        UpdateHover(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
-                    PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))));
+    case WM_LBUTTONDBLCLK: {
+        const float x = PxToDip(static_cast<float>(GET_X_LPARAM(lParam)));
+        const float y = PxToDip(static_cast<float>(GET_Y_LPARAM(lParam)));
+        UpdateHover(x, y);
         // The second click of a double-click on a checkbox toggles it again, like a single click.
         if (m_hoverTask) {
             m_pressedTaskOffset = m_hoverTask->taskMarkOffset;
             return 0;
         }
-        if (!m_hoverLink && m_tree && m_onSourceNavigate) {
-            m_onSourceNavigate(m_layout.HitTestSource(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
-                                                      PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))) + m_scrollPos));
+        if (wParam & MK_CONTROL) {
+            return 0; // The first click already went to the editor
         }
+        m_lastDoubleClickTime = GetMessageTime();
+        m_lastDoubleClickPoint = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        m_pressedUrl.clear();
+        BeginSelection(x, y, SelectMode::Word, false);
+        StartMouseSelection();
+        m_dragging = true; // Dragging now extends word by word
         return 0;
+    }
 
     case WM_LBUTTONUP: {
+        const bool dragged = m_dragging;
+        EndMouseSelection();
         UpdateHover(PxToDip(static_cast<float>(GET_X_LPARAM(lParam))),
                     PxToDip(static_cast<float>(GET_Y_LPARAM(lParam))));
         // Only follow a link (or toggle a checkbox) when press and release happen on it.
@@ -256,11 +314,30 @@ LRESULT PreviewView::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         std::string url;
         url.swap(m_pressedUrl);
-        if (!url.empty() && url == m_hoverUrl) {
+        if (!dragged && !url.empty() && url == m_hoverUrl) {
             OpenLink(url);
             return 0;
         }
         break;
+    }
+
+    case WM_CAPTURECHANGED:
+        if (reinterpret_cast<HWND>(lParam) != m_hwnd) {
+            EndMouseSelection();
+        }
+        return 0;
+
+    case WM_TIMER:
+        if (wParam == kAutoScrollTimer) {
+            AutoScrollStep();
+            return 0;
+        }
+        break;
+
+    case WM_CONTEXTMENU: {
+        const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ShowContextMenu(pt, pt.x == -1 && pt.y == -1); // (-1, -1): Shift+F10 or the menu key
+        return 0;
     }
 
     case WM_DESTROY:
@@ -317,7 +394,13 @@ void PreviewView::Render() {
         m_renderTarget->BeginDraw();
         m_renderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
         m_renderTarget->Clear(m_colors.background);
-        m_renderer.Draw(m_renderTarget.Get(), m_layout, std::round(m_scrollPos), m_viewHeight);
+        const float scrollY = std::round(m_scrollPos);
+        // Only the visible part of the selection is measured: Ctrl+A on a long document stays cheap.
+        m_selectionRects.clear();
+        if (HasSelection()) {
+            m_layout.GetSelectionRects(m_selAnchor, m_selFocus, scrollY, scrollY + m_viewHeight, m_selectionRects);
+        }
+        m_renderer.Draw(m_renderTarget.Get(), m_layout, scrollY, m_viewHeight, m_selectionRects);
 
         const HRESULT hr = m_renderTarget->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET) {
@@ -336,6 +419,7 @@ void PreviewView::Relayout() {
     m_pressedUrl.clear();
     m_hoverTask = nullptr;
     m_pressedTaskOffset = -1;
+    m_hoverText = false;
 
     if (m_tree) {
         m_layoutWidthDip = PxToDip(static_cast<float>(m_clientWidthPx));
@@ -349,6 +433,10 @@ void PreviewView::Relayout() {
 void PreviewView::SetBlockTree(std::unique_ptr<Markdown::BlockTree> tree) {
     if (!tree) return;
     m_tree = std::move(tree);
+    // Text positions belong to the previous tree (a resize or DPI change keeps them).
+    EndMouseSelection();
+    m_selAnchor = m_selFocus = TextPosition{};
+    m_anchorRange = TextRange{};
     Relayout();
 }
 
@@ -444,12 +532,20 @@ void PreviewView::ResetScroll() {
 }
 
 void PreviewView::UpdateHover(float xDip, float yDip) {
-    const LayoutBlock* task = m_onToggleTask ? m_layout.HitTestTaskBox(xDip, yDip + m_scrollPos) : nullptr;
-    if (task != m_hoverTask) {
-        m_hoverTask = task;
-        SetCursor(task || m_hoverLink ? m_hHandCursor : m_hArrowCursor);
+    const HCURSOR previous = CursorForHover();
+    const float y = yDip + m_scrollPos;
+    m_hoverTask = m_onToggleTask ? m_layout.HitTestTaskBox(xDip, y) : nullptr;
+    m_hoverText = m_layout.IsOverText(xDip, y);
+    SetHoverLink(m_layout.HitTestLinkBox(xDip, y));
+    if (const HCURSOR cursor = CursorForHover(); cursor != previous) {
+        SetCursor(cursor);
     }
-    SetHoverLink(m_layout.HitTestLinkBox(xDip, yDip + m_scrollPos));
+}
+
+HCURSOR PreviewView::CursorForHover() const {
+    if (m_dragging) return m_hTextCursor;
+    if (m_hoverLink || m_hoverTask) return m_hHandCursor;
+    return m_hoverText ? m_hTextCursor : m_hArrowCursor;
 }
 
 void PreviewView::ToggleTask(int taskMarkOffset) {
@@ -485,7 +581,6 @@ void PreviewView::SetHoverLink(const LinkHitBox* link) {
 
     m_hoverLink = link;
     m_hoverUrl = link ? link->url : std::string();
-    SetCursor(link || m_hoverTask ? m_hHandCursor : m_hArrowCursor);
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -562,6 +657,210 @@ void PreviewView::ScrollToAnchor(std::string_view slug) {
 
 void PreviewView::ScrollToLine(int line) {
     ScrollTo(m_layout.GetScrollYForLine(line), false);
+}
+
+// ==============================================================================
+// Text selection
+// ==============================================================================
+
+void PreviewView::SetSelection(TextPosition anchor, TextPosition focus) {
+    if (anchor == m_selAnchor && focus == m_selFocus) return;
+    const bool repaint = HasSelection() || anchor != focus;
+    m_selAnchor = anchor;
+    m_selFocus = focus;
+    if (repaint) {
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+}
+
+void PreviewView::SelectAll() {
+    if (!m_layout.HasText()) return;
+    m_anchorRange = TextRange{};
+    SetSelection(TextPosition{}, m_layout.DocumentEnd());
+}
+
+void PreviewView::ClearSelection() {
+    SetSelection(m_selFocus, m_selFocus);
+}
+
+void PreviewView::CopySelection() const {
+    if (!HasSelection()) return;
+    const std::wstring text = m_layout.GetSelectedText(m_selAnchor, m_selFocus);
+    if (!text.empty()) {
+        Platform::CopyTextToClipboard(m_hwnd, text);
+    }
+}
+
+TextRange PreviewView::RangeAt(float xDip, float yDip) const {
+    const float y = yDip + m_scrollPos;
+    switch (m_selectMode) {
+    case SelectMode::Word:
+        return m_layout.WordAt(xDip, y);
+    case SelectMode::Unit:
+        return m_layout.UnitAt(xDip, y);
+    default: {
+        const TextPosition caret = m_layout.HitTestTextPosition(xDip, y);
+        return TextRange{caret, caret};
+    }
+    }
+}
+
+void PreviewView::BeginSelection(float xDip, float yDip, SelectMode mode, bool extend) {
+    m_selectMode = mode;
+    if (extend) {
+        // Shift+click: from the anchor of the current selection (or the last click) to here.
+        m_anchorRange = TextRange{m_selAnchor, m_selAnchor};
+        ExtendSelection(xDip, yDip);
+        return;
+    }
+    m_anchorRange = RangeAt(xDip, yDip);
+    SetSelection(m_anchorRange.start, m_anchorRange.end);
+}
+
+void PreviewView::ExtendSelection(float xDip, float yDip) {
+    // A word or unit selection grows by whole words or units, keeping the one it started on.
+    const TextRange target = RangeAt(xDip, yDip);
+    if (target.start < m_anchorRange.start) {
+        SetSelection(m_anchorRange.end, target.start);
+    } else {
+        SetSelection(m_anchorRange.start, (std::max)(target.end, m_anchorRange.end));
+    }
+}
+
+void PreviewView::StartMouseSelection() {
+    m_mouseDown = true;
+    m_dragging = false;
+    SetCapture(m_hwnd);
+}
+
+void PreviewView::EndMouseSelection() {
+    const bool wasDown = m_mouseDown;
+    m_mouseDown = false;
+    m_dragging = false;
+    if (m_autoScrolling) {
+        KillTimer(m_hwnd, kAutoScrollTimer);
+        m_autoScrolling = false;
+    }
+    if (wasDown && GetCapture() == m_hwnd) {
+        ReleaseCapture(); // Sends WM_CAPTURECHANGED, which finds nothing left to end
+    }
+}
+
+bool PreviewView::IsTripleClick(LPARAM lParam) const {
+    // Windows reports double-clicks only: a third press soon after one, close to it, is a triple-click.
+    const DWORD elapsed = static_cast<DWORD>(GetMessageTime()) - static_cast<DWORD>(m_lastDoubleClickTime);
+    if (m_lastDoubleClickTime == 0 || elapsed > GetDoubleClickTime()) {
+        return false;
+    }
+    return std::abs(GET_X_LPARAM(lParam) - m_lastDoubleClickPoint.x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
+           std::abs(GET_Y_LPARAM(lParam) - m_lastDoubleClickPoint.y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+}
+
+bool PreviewView::IsInsideSelection(float xDip, float yDip) const {
+    if (!HasSelection()) return false;
+    const float y = yDip + m_scrollPos;
+    std::vector<SelectionRect> rects;
+    m_layout.GetSelectionRects(m_selAnchor, m_selFocus, y - 1.0f, y + 1.0f, rects);
+    return std::any_of(rects.begin(), rects.end(), [&](const SelectionRect& s) {
+        return xDip >= s.rect.left && xDip <= s.rect.right && y >= s.rect.top && y <= s.rect.bottom;
+    });
+}
+
+void PreviewView::UpdateAutoScroll(int yPx) {
+    const bool outside = yPx < 0 || yPx >= m_clientHeightPx;
+    if (outside && !m_autoScrolling) {
+        m_autoScrolling = SetTimer(m_hwnd, kAutoScrollTimer, kAutoScrollIntervalMs, nullptr) != 0;
+    } else if (!outside && m_autoScrolling) {
+        KillTimer(m_hwnd, kAutoScrollTimer);
+        m_autoScrolling = false;
+    }
+}
+
+void PreviewView::AutoScrollStep() {
+    POINT pt{};
+    if (!m_mouseDown || !GetCursorPos(&pt) || !ScreenToClient(m_hwnd, &pt)) {
+        EndMouseSelection();
+        return;
+    }
+    // Faster the further the pointer is from the view, like a text editor.
+    float distance = 0.0f;
+    if (pt.y < 0) {
+        distance = -PxToDip(static_cast<float>(-pt.y));
+    } else if (pt.y >= m_clientHeightPx) {
+        distance = PxToDip(static_cast<float>(pt.y - m_clientHeightPx + 1));
+    }
+    if (distance == 0.0f) return;
+    const float step = std::copysign(4.0f + (std::min)(std::fabs(distance), 200.0f) * 0.5f, distance);
+    ScrollTo(m_scrollPos + step);
+    ExtendSelection(PxToDip(static_cast<float>(pt.x)), PxToDip(static_cast<float>(pt.y)));
+}
+
+void PreviewView::EditAt(float xDip, float yDip, bool useSelection) {
+    if (!m_tree) return;
+    if (useSelection && HasSelection() && m_onSourceSelect) {
+        m_onSourceSelect(m_layout.GetSourceSelection(m_selAnchor, m_selFocus));
+    } else if (m_onSourceNavigate) {
+        m_onSourceNavigate(m_layout.HitTestSource(xDip, yDip + m_scrollPos));
+    }
+}
+
+void PreviewView::ShowContextMenu(POINT screenPt, bool fromKeyboard) {
+    // The point the menu acts on, in view DIPs: the click, or the selection (top of the view) from the keyboard.
+    float x = 0.0f;
+    float y = 0.0f;
+    if (fromKeyboard) {
+        POINT client{0, 0};
+        if (HasSelection() && !m_selectionRects.empty()) {
+            const D2D1_RECT_F& first = m_selectionRects.front().rect;
+            x = first.left;
+            y = first.bottom - std::round(m_scrollPos);
+            client = POINT{static_cast<LONG>(x * static_cast<float>(m_dpi) / 96.0f),
+                           static_cast<LONG>(y * static_cast<float>(m_dpi) / 96.0f)};
+        } else {
+            x = m_layout.GetLayoutWidth() * 0.5f;
+        }
+        screenPt = client;
+        ClientToScreen(m_hwnd, &screenPt);
+    } else {
+        POINT client = screenPt;
+        ScreenToClient(m_hwnd, &client);
+        x = PxToDip(static_cast<float>(client.x));
+        y = PxToDip(static_cast<float>(client.y));
+    }
+    const bool onSelection = fromKeyboard ? HasSelection() : IsInsideSelection(x, y);
+
+    enum : UINT { kCopy = 1, kCopyMarkdown, kSelectAll, kEditHere };
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    const auto item = [](bool enabled) { return static_cast<UINT>(MF_STRING | (enabled ? MF_ENABLED : MF_GRAYED)); };
+    AppendMenuW(menu, item(HasSelection()), kCopy, L"&Copiar\tCtrl+C");
+    AppendMenuW(menu, item(HasSelection() && m_onCopyMarkdown), kCopyMarkdown, L"Copiar como &Markdown");
+    AppendMenuW(menu, item(m_layout.HasText()), kSelectAll, L"Seleccionar &todo\tCtrl+A");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, item(m_tree && m_onSourceNavigate), kEditHere, L"&Editar aquí\tCtrl+clic");
+    const auto command = static_cast<UINT>(
+        TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screenPt.x, screenPt.y, m_hwnd, nullptr));
+    DestroyMenu(menu);
+
+    switch (command) {
+    case kCopy:
+        CopySelection();
+        break;
+    case kCopyMarkdown:
+        if (m_tree && HasSelection() && m_onCopyMarkdown &&
+            !m_onCopyMarkdown(m_tree->version, m_layout.GetSourceSelection(m_selAnchor, m_selFocus))) {
+            MessageBeep(MB_ICONWARNING);
+        }
+        break;
+    case kSelectAll:
+        SelectAll();
+        break;
+    case kEditHere:
+        EditAt(x, y, onSelection);
+        break;
+    default:
+        break;
+    }
 }
 
 } // namespace Pluma::Preview

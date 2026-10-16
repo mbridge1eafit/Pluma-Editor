@@ -19,6 +19,7 @@
 #include <ctime>
 
 #include "../platform/app_package.h"
+#include "../platform/clipboard.h"
 #include "../platform/dpi.h"
 #include "../platform/theme.h"
 #include "../io/document_io.h"
@@ -61,6 +62,26 @@ std::string Utf16ToUtf8(std::wstring_view utf16) {
     if (count <= 0) return {};
     std::string result(count, '\0');
     WideCharToMultiByte(CP_UTF8, 0, utf16.data(), static_cast<int>(utf16.size()), result.data(), count, nullptr, nullptr);
+    return result;
+}
+
+// UTF-8 document text as clipboard text: UTF-16 with CRLF line endings.
+std::wstring ToClipboardText(std::string_view utf8) {
+    if (utf8.empty()) return {};
+    const int count = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+    if (count <= 0) return {};
+    std::wstring text(static_cast<size_t>(count), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), text.data(), count);
+    std::wstring result;
+    result.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == L'\r' || text[i] == L'\n') {
+            result += L"\r\n";
+            if (text[i] == L'\r' && i + 1 < text.size() && text[i + 1] == L'\n') ++i;
+        } else {
+            result += text[i];
+        }
+    }
     return result;
 }
 
@@ -882,8 +903,8 @@ public:
         UpdateStatusBar();
     }
 
-    // Double-click in the preview: caret on the clicked character, showing the editor if hidden.
-    void NavigateToSource(const Pluma::Preview::SourceHit& hit) {
+    // Editing from the preview shows the editor when it is hidden.
+    void ShowEditorForPreviewEdit() {
         if (m_viewMode == ViewMode::PreviewOnly) {
             // Narrowing the preview reflows it: keep the same content at the top of both views.
             const int topLine = m_preview.GetLineForCurrentScroll();
@@ -891,12 +912,46 @@ public:
             m_preview.ScrollToLine(topLine);
             m_editor.ScrollToDocLine(topLine);
         }
+    }
+
+    // Ctrl+click in the preview: caret on the clicked character.
+    void NavigateToSource(const Pluma::Preview::SourceHit& hit) {
+        ShowEditorForPreviewEdit();
         if (hit.exact) {
             m_editor.GotoSourcePosition(hit.srcOffset, hit.utf16Delta);
         } else {
             m_editor.GotoLine(hit.line);
         }
         m_editor.SetFocus();
+    }
+
+    // Editor range of a preview selection: its exact ends, or whole lines where the text is generated.
+    std::pair<sptr_t, sptr_t> SourceRange(const Pluma::Preview::SourceSelection& sel, bool wholeLines) const {
+        const sptr_t start = !wholeLines && sel.start.exact
+                                 ? m_editor.PositionFromSource(sel.start.srcOffset, sel.start.utf16Delta)
+                                 : m_editor.LineStartPosition(sel.startLine);
+        const sptr_t end = !wholeLines && sel.end.exact
+                               ? m_editor.PositionFromSource(sel.end.srcOffset, sel.end.utf16Delta)
+                               : m_editor.LineEndPosition(sel.endLine);
+        return {start, (std::max)(start, end)};
+    }
+
+    // "Editar aquí" on a preview selection: the same text selected in the editor.
+    void NavigateToSourceRange(const Pluma::Preview::SourceSelection& sel) {
+        ShowEditorForPreviewEdit();
+        const auto [start, end] = SourceRange(sel, false);
+        m_editor.SelectRange(start, end);
+        m_editor.SetFocus();
+        UpdateStatusBar();
+    }
+
+    // "Copiar como Markdown": the source of a preview selection, only while the preview shows the
+    // current text (source offsets are only valid for the text the tree was parsed from).
+    bool CopySourceMarkdown(uint64_t treeVersion, const Pluma::Preview::SourceSelection& sel) {
+        if (treeVersion != m_docVersion || m_reparsePosted) return false;
+        const auto [start, end] = SourceRange(sel, sel.wholeLines);
+        const std::wstring text = ToClipboardText(m_editor.GetTextRange(start, end));
+        return !text.empty() && Pluma::Platform::CopyTextToClipboard(m_hwnd, text);
     }
 
     void FocusMainView() {
@@ -1260,6 +1315,12 @@ private:
             m_preview.SetOnSourceNavigateCallback([this](const Pluma::Preview::SourceHit& hit) {
                 NavigateToSource(hit);
             });
+            m_preview.SetOnSourceSelectCallback([this](const Pluma::Preview::SourceSelection& sel) {
+                NavigateToSourceRange(sel);
+            });
+            m_preview.SetOnCopyMarkdownCallback([this](uint64_t treeVersion, const Pluma::Preview::SourceSelection& sel) {
+                return CopySourceMarkdown(treeVersion, sel);
+            });
             m_preview.SetOnToggleTaskCallback([this](uint64_t treeVersion, int markOffset, bool checked) {
                 // Source offsets are only valid for the text the displayed tree was parsed from.
                 if (markOffset < 0 || treeVersion != m_docVersion || m_reparsePosted) {
@@ -1558,7 +1619,11 @@ private:
                 m_editor.Cut();
                 return 0;
             case IDM_EDIT_COPY:
-                m_editor.Copy();
+                if (GetFocus() == m_preview.GetHwnd()) {
+                    m_preview.CopySelection();
+                } else {
+                    m_editor.Copy();
+                }
                 return 0;
             case IDM_EDIT_PASTE:
                 m_editor.Paste();
@@ -1569,7 +1634,11 @@ private:
                 UpdateWordWrapMenuCheck();
                 return 0;
             case IDM_EDIT_SELECTALL:
-                m_editor.SelectAll();
+                if (GetFocus() == m_preview.GetHwnd()) {
+                    m_preview.SelectAll();
+                } else {
+                    m_editor.SelectAll();
+                }
                 return 0;
             case IDM_EDIT_FIND:
                 ShowFindDialog();

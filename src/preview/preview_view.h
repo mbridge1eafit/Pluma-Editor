@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <functional>
+#include <vector>
 
 #include "preview_layout.h"
 #include "preview_renderer.h"
@@ -57,10 +58,27 @@ public:
         m_onOpenDocument = std::move(callback);
     }
 
-    // Invoked on a double-click outside links: the source position to edit.
+    // Invoked on Ctrl+click and on "Editar aquí" outside the selection: the source position to edit.
     void SetOnSourceNavigateCallback(std::function<void(const SourceHit&)> callback) {
         m_onSourceNavigate = std::move(callback);
     }
+
+    // Invoked on "Editar aquí" inside the selection: the source it covers.
+    void SetOnSourceSelectCallback(std::function<void(const SourceSelection&)> callback) {
+        m_onSourceSelect = std::move(callback);
+    }
+
+    // Invoked on "Copiar como Markdown", with the version of the displayed tree. Returns false when
+    // the source could not be copied (the tree no longer matches the document).
+    void SetOnCopyMarkdownCallback(std::function<bool(uint64_t treeVersion, const SourceSelection&)> callback) {
+        m_onCopyMarkdown = std::move(callback);
+    }
+
+    // Text selection (mouse, Ctrl+A, Ctrl+C, context menu).
+    bool HasSelection() const noexcept { return m_selAnchor != m_selFocus; }
+    void SelectAll();
+    void CopySelection() const;
+    void ClearSelection();
 
     // Invoked when a task checkbox is clicked, with the version of the displayed tree. Returns true
     // when the document was changed, so the checkbox can be redrawn before the re-parse arrives.
@@ -84,6 +102,22 @@ private:
     void SetHoverLink(const LinkHitBox* link);
     void ToggleTask(int taskMarkOffset);
     void OpenLink(const std::string& url);
+    HCURSOR CursorForHover() const;
+
+    // Mouse selection: characters (drag), words (double-click) or whole text units (triple-click).
+    enum class SelectMode { Character, Word, Unit };
+    TextRange RangeAt(float xDip, float yDip) const; // In view coordinates, for m_selectMode
+    void BeginSelection(float xDip, float yDip, SelectMode mode, bool extend);
+    void ExtendSelection(float xDip, float yDip);
+    void SetSelection(TextPosition anchor, TextPosition focus);
+    void StartMouseSelection();
+    void EndMouseSelection();
+    bool IsTripleClick(LPARAM lParam) const;
+    bool IsInsideSelection(float xDip, float yDip) const;
+    void UpdateAutoScroll(int yPx);
+    void AutoScrollStep();
+    void ShowContextMenu(POINT screenPt, bool fromKeyboard);
+    void EditAt(float xDip, float yDip, bool useSelection);
 
     float PxToDip(float px) const noexcept { return px * 96.0f / static_cast<float>(m_dpi); }
 
@@ -119,11 +153,29 @@ private:
     const LayoutBlock* m_hoverTask = nullptr;
     int m_pressedTaskOffset = -1;
     bool m_trackingMouse = false;
+    bool m_hoverText = false;
     HCURSOR m_hHandCursor = nullptr;
     HCURSOR m_hArrowCursor = nullptr;
+    HCURSOR m_hTextCursor = nullptr;
+
+    // Selection: [min(anchor, focus), max(anchor, focus)). Reset when a new tree arrives.
+    TextPosition m_selAnchor;
+    TextPosition m_selFocus;
+    TextRange m_anchorRange;   // Word or unit the mouse selection started on (extended as a whole)
+    SelectMode m_selectMode = SelectMode::Character;
+    bool m_mouseDown = false;  // Left button pressed for a selection (mouse captured)
+    bool m_dragging = false;   // The press became a selection: no link opens on release
+    POINT m_downPoint{};
+    LONG m_lastDoubleClickTime = 0;
+    POINT m_lastDoubleClickPoint{};
+    bool m_autoScrolling = false;
+    std::vector<SelectionRect> m_selectionRects; // Visible part, rebuilt on paint
+
     std::function<void(int line)> m_onScrollCallback;
     std::function<void(const std::filesystem::path&)> m_onOpenDocument;
     std::function<void(const SourceHit&)> m_onSourceNavigate;
+    std::function<void(const SourceSelection&)> m_onSourceSelect;
+    std::function<bool(uint64_t, const SourceSelection&)> m_onCopyMarkdown;
     std::function<bool(uint64_t, int, bool)> m_onToggleTask;
 };
 

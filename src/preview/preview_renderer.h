@@ -7,6 +7,8 @@
 #include <d2d1.h>
 #include <wrl/client.h>
 
+#include <span>
+
 #include "preview_layout.h"
 
 namespace Pluma::Preview {
@@ -24,13 +26,18 @@ public:
     // Must be called again after the layout is recomputed or the brushes are recreated.
     void ApplyTextEffects(const LayoutEngine& layout) const;
 
-    void Draw(ID2D1RenderTarget* renderTarget, const LayoutEngine& layout, float scrollY, float viewHeight) const;
+    // `selection` (ordered by block) is highlighted behind the text of its blocks.
+    void Draw(ID2D1RenderTarget* renderTarget, const LayoutEngine& layout, float scrollY, float viewHeight,
+              std::span<const SelectionRect> selection = {}) const;
 
 private:
-    void DrawTextBlock(ID2D1RenderTarget* rt, const LayoutBlock& block) const;
+    using BlockSelection = std::span<const SelectionRect>;
+
+    void DrawSelection(ID2D1RenderTarget* rt, BlockSelection selection) const;
+    void DrawTextBlock(ID2D1RenderTarget* rt, const LayoutBlock& block, BlockSelection selection) const;
     void DrawListMarker(ID2D1RenderTarget* rt, const LayoutBlock& block) const;
-    void DrawCodeBlock(ID2D1RenderTarget* rt, const LayoutBlock& block) const;
-    void DrawTable(ID2D1RenderTarget* rt, const LayoutBlock& block) const;
+    void DrawCodeBlock(ID2D1RenderTarget* rt, const LayoutBlock& block, BlockSelection selection) const;
+    void DrawTable(ID2D1RenderTarget* rt, const LayoutBlock& block, BlockSelection selection) const;
     void DrawDiagram(ID2D1RenderTarget* rt, const LayoutBlock& block) const;
     void EnsureDiagramGeometries(ID2D1Factory* factory, const DiagramVisual& visual) const;
     ID2D1Brush* TextBrushFor(const LayoutBlock& block) const;
@@ -52,6 +59,7 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushTableStripe;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushAccent;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushAccentText;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushSelection;
 
     // Diagrams: one brush recoloured per primitive from the theme palette.
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushDiagram;

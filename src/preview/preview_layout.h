@@ -8,12 +8,14 @@
 #include <dwrite.h>
 #include <wrl/client.h>
 
+#include <compare>
 #include <string>
 #include <vector>
 #include <map>
 #include <memory>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 #include "../diagram/diagram_scene.h"
 #include "../markdown/block_tree.h"
@@ -43,6 +45,7 @@ struct PreviewThemeColors {
     D2D1_COLOR_F tableStripeBg;
     D2D1_COLOR_F accent;      // Checked task boxes
     D2D1_COLOR_F accentText;  // Check mark drawn on top of the accent
+    D2D1_COLOR_F selection;   // Translucent text selection highlight
     Diagram::Palette diagram; // Mermaid diagrams
 
     static PreviewThemeColors Light();
@@ -77,7 +80,7 @@ struct SourceSegment {
     UINT32 srcOffset = 0;
 };
 
-// Source position under a point of the preview (double-click to edit).
+// Source position under a point of the preview (Ctrl+click to edit).
 struct SourceHit {
     int line = 1;            // 1-based source line, always valid
     bool exact = false;      // srcOffset/utf16Delta locate the character under the point
@@ -85,10 +88,51 @@ struct SourceHit {
     UINT32 utf16Delta = 0;   // ...plus this many UTF-16 code units
 };
 
+// Selectable text: one unit per text layout, in document order (a block's own text, or a table
+// cell, row by row). List markers, code block labels and diagrams are not selectable.
+struct TextUnit {
+    size_t block = 0;
+    int row = -1; // Table cell, or -1 for the block's own text
+    int col = -1;
+};
+
+// Caret position in the selectable text: a UTF-16 offset inside a text unit.
+struct TextPosition {
+    size_t unit = 0;
+    UINT32 offset = 0;
+
+    auto operator<=>(const TextPosition&) const = default;
+};
+
+struct TextRange {
+    TextPosition start;
+    TextPosition end;
+};
+
+// Highlight rectangle of a selection in content space, drawn with the block it belongs to.
+struct SelectionRect {
+    size_t block = 0;
+    D2D1_RECT_F rect{};
+};
+
+// Source covered by a selection ("Edit here", "Copy as Markdown").
+struct SourceSelection {
+    SourceHit start;         // Leading edge: after any markup that opens the selected text
+    SourceHit end;           // Trailing edge: before any markup that closes it
+    int startLine = 1;       // Source lines of the first and last blocks (table rows) it touches
+    int endLine = 1;
+    bool wholeLines = false; // It spans several units or a whole one: its Markdown is whole lines
+};
+
+// [start, end) of the word, run of spaces or run of punctuation containing the character at
+// `index` (double-click selection). Empty when the text is empty.
+std::pair<UINT32, UINT32> WordBounds(std::wstring_view text, UINT32 index);
+
 struct TableCellLayout {
     D2D1_RECT_F rect{};
     D2D1_POINT_2F textOrigin{};
     ComPtr<IDWriteTextLayout> textLayout;
+    std::wstring text;                    // What textLayout shows (IDWriteTextLayout does not expose it)
     std::vector<EffectRange> effects;
     std::vector<SourceSegment> sourceMap;
     bool isHeader = false;
@@ -116,6 +160,7 @@ struct LayoutBlock {
     D2D1_RECT_F bounds{};
     D2D1_POINT_2F textOrigin{};
     ComPtr<IDWriteTextLayout> textLayout;
+    std::wstring text;                    // What textLayout shows (IDWriteTextLayout does not expose it)
     std::vector<EffectRange> effects;
     std::vector<SourceSegment> sourceMap; // Ordered by textStart
     int level = 0;              // Heading level (1-6)
@@ -178,6 +223,26 @@ public:
     // Task list item whose checkbox contains (x, y), or nullptr.
     const LayoutBlock* HitTestTaskBox(float x, float y) const;
 
+    // Text selection. Positions stay valid while the layout is recomputed from the same tree
+    // (resize, DPI change), not across trees.
+    const std::vector<TextUnit>& GetTextUnits() const noexcept { return m_textUnits; }
+    bool HasText() const noexcept { return !m_textUnits.empty(); }
+    TextPosition DocumentEnd() const;
+    // Caret position nearest to (x, y) in content space.
+    TextPosition HitTestTextPosition(float x, float y) const;
+    // True when (x, y) is over the glyphs of a text unit (text cursor).
+    bool IsOverText(float x, float y) const;
+    // Word (double-click) and whole text unit (triple-click) under (x, y).
+    TextRange WordAt(float x, float y) const;
+    TextRange UnitAt(float x, float y) const;
+    // Highlight rectangles of [a, b) (in any order) for the units intersecting [top, bottom].
+    void GetSelectionRects(TextPosition a, TextPosition b, float top, float bottom,
+                           std::vector<SelectionRect>& out) const;
+    // Plain text of [a, b): tabs between the cells of a row, CRLF between rows and list items, a
+    // blank line between other blocks.
+    std::wstring GetSelectedText(TextPosition a, TextPosition b) const;
+    SourceSelection GetSourceSelection(TextPosition a, TextPosition b) const;
+
     // Updates a task checkbox ahead of the re-parse that confirms it (instant feedback).
     void SetTaskChecked(int taskMarkOffset, bool checked);
 
@@ -205,6 +270,20 @@ private:
 
     struct SpanRange;
     struct RichText;
+
+    // The layout, text and geometry behind a TextUnit.
+    struct UnitView {
+        IDWriteTextLayout* layout = nullptr;
+        D2D1_POINT_2F origin{};
+        const std::wstring* text = nullptr;
+        const std::vector<SourceSegment>* sourceMap = nullptr;
+        D2D1_RECT_F area{}; // Hit-test and clip rectangle (block bounds or table cell)
+    };
+    UnitView ViewOf(const TextUnit& unit) const;
+    void BuildTextUnits();
+    // Unit nearest to (x, y), with the caret offset and the index of the character under the point.
+    bool HitTestUnit(float x, float y, size_t& unit, UINT32& caret, UINT32& character) const;
+    SourceHit SourceAt(TextPosition pos, bool trailing) const;
 
     void LayoutChildren(const Markdown::Block& parent, const Context& ctx, float& currentY);
     void LayoutNode(const Markdown::Block& block, const Context& ctx, float& currentY, float containerTop);
@@ -246,6 +325,7 @@ private:
     float m_layoutWidth = 0.0f;
     std::vector<LayoutBlock> m_blocks;
     std::vector<size_t> m_syncBlocks; // Indices of blocks used for line <-> Y mapping (document order)
+    std::vector<TextUnit> m_textUnits;
     std::map<std::string, float> m_anchors;
     std::map<std::string, int> m_slugCounts;
 

@@ -46,6 +46,7 @@ bool PreviewRenderer::CreateResources(ID2D1RenderTarget* rt, const PreviewThemeC
         {colors.tableStripeBg, m_brushTableStripe},
         {colors.accent, m_brushAccent},
         {colors.accentText, m_brushAccentText},
+        {colors.selection, m_brushSelection},
         {colors.text, m_brushDiagram},
     };
     for (const auto& spec : specs) {
@@ -88,6 +89,7 @@ void PreviewRenderer::DiscardResources() {
     m_brushTableStripe.Reset();
     m_brushAccent.Reset();
     m_brushAccentText.Reset();
+    m_brushSelection.Reset();
     m_brushDiagram.Reset();
     m_strokeRound.Reset();
     m_strokeDashed.Reset();
@@ -123,10 +125,17 @@ ID2D1Brush* PreviewRenderer::TextBrushFor(const LayoutBlock& block) const {
     return block.quoteDepth > 0 ? m_brushQuoteText.Get() : m_brushText.Get();
 }
 
-void PreviewRenderer::DrawTextBlock(ID2D1RenderTarget* rt, const LayoutBlock& block) const {
+void PreviewRenderer::DrawSelection(ID2D1RenderTarget* rt, BlockSelection selection) const {
+    for (const auto& s : selection) {
+        rt->FillRectangle(s.rect, m_brushSelection.Get());
+    }
+}
+
+void PreviewRenderer::DrawTextBlock(ID2D1RenderTarget* rt, const LayoutBlock& block, BlockSelection selection) const {
     for (const auto& pill : block.inlineCodePills) {
         rt->FillRoundedRectangle(D2D1::RoundedRect(pill, 4.0f, 4.0f), m_brushInlineCodeBg.Get());
     }
+    DrawSelection(rt, selection);
     if (block.textLayout) {
         rt->DrawTextLayout(block.textOrigin, block.textLayout.Get(), TextBrushFor(block), kTextOptions);
     }
@@ -178,7 +187,7 @@ void PreviewRenderer::DrawListMarker(ID2D1RenderTarget* rt, const LayoutBlock& b
     }
 }
 
-void PreviewRenderer::DrawCodeBlock(ID2D1RenderTarget* rt, const LayoutBlock& block) const {
+void PreviewRenderer::DrawCodeBlock(ID2D1RenderTarget* rt, const LayoutBlock& block, BlockSelection selection) const {
     const D2D1_RECT_F& b = block.bounds;
     const D2D1_ROUNDED_RECT box = D2D1::RoundedRect(
         D2D1::RectF(b.left + 0.5f, b.top + 0.5f, b.right - 0.5f, b.bottom - 0.5f), 6.0f, 6.0f);
@@ -190,13 +199,14 @@ void PreviewRenderer::DrawCodeBlock(ID2D1RenderTarget* rt, const LayoutBlock& bl
     if (block.labelLayout) {
         rt->DrawTextLayout(block.labelOrigin, block.labelLayout.Get(), m_brushMuted.Get(), kTextOptions);
     }
+    DrawSelection(rt, selection);
     if (block.textLayout) {
         rt->DrawTextLayout(block.textOrigin, block.textLayout.Get(), m_brushCodeText.Get(), kTextOptions);
     }
     rt->PopAxisAlignedClip();
 }
 
-void PreviewRenderer::DrawTable(ID2D1RenderTarget* rt, const LayoutBlock& block) const {
+void PreviewRenderer::DrawTable(ID2D1RenderTarget* rt, const LayoutBlock& block, BlockSelection selection) const {
     // Backgrounds: header and zebra stripes.
     for (const auto& row : block.tableRows) {
         for (const auto& cell : row) {
@@ -211,6 +221,7 @@ void PreviewRenderer::DrawTable(ID2D1RenderTarget* rt, const LayoutBlock& block)
     for (const auto& pill : block.inlineCodePills) {
         rt->FillRoundedRectangle(D2D1::RoundedRect(pill, 4.0f, 4.0f), m_brushInlineCodeBg.Get());
     }
+    DrawSelection(rt, selection);
 
     // Cell text, clipped to its cell so nothing can spill into neighbours.
     ID2D1Brush* textBrush = block.quoteDepth > 0 ? m_brushQuoteText.Get() : m_brushText.Get();
@@ -331,14 +342,26 @@ void PreviewRenderer::DrawDiagram(ID2D1RenderTarget* rt, const LayoutBlock& bloc
     rt->SetTransform(previous);
 }
 
-void PreviewRenderer::Draw(ID2D1RenderTarget* rt, const LayoutEngine& layout, float scrollY, float viewHeight) const {
+void PreviewRenderer::Draw(ID2D1RenderTarget* rt, const LayoutEngine& layout, float scrollY, float viewHeight,
+                           std::span<const SelectionRect> selection) const {
     if (!rt || !HasResources()) return;
 
     rt->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, -scrollY));
     const float viewTop = scrollY;
     const float viewBottom = scrollY + viewHeight;
 
-    for (const auto& block : layout.GetBlocks()) {
+    const auto& blocks = layout.GetBlocks();
+    size_t next = 0; // First selection rectangle not drawn yet
+    for (size_t index = 0; index < blocks.size(); ++index) {
+        const LayoutBlock& block = blocks[index];
+
+        // This block's slice of the selection.
+        while (next < selection.size() && selection[next].block < index) ++next;
+        size_t end = next;
+        while (end < selection.size() && selection[end].block == index) ++end;
+        const BlockSelection blockSelection = selection.subspan(next, end - next);
+        next = end;
+
         // Viewport culling
         if (block.bounds.bottom < viewTop || block.bounds.top > viewBottom) {
             continue;
@@ -346,7 +369,7 @@ void PreviewRenderer::Draw(ID2D1RenderTarget* rt, const LayoutEngine& layout, fl
 
         switch (block.type) {
         case Markdown::BlockType::Heading:
-            DrawTextBlock(rt, block);
+            DrawTextBlock(rt, block, blockSelection);
             if (block.level <= 2) {
                 const float y = block.bounds.bottom - 1.0f;
                 rt->FillRectangle(D2D1::RectF(block.bounds.left, y - 1.0f, block.bounds.right, y), m_brushRule.Get());
@@ -354,27 +377,27 @@ void PreviewRenderer::Draw(ID2D1RenderTarget* rt, const LayoutEngine& layout, fl
             break;
 
         case Markdown::BlockType::Paragraph:
-            DrawTextBlock(rt, block);
+            DrawTextBlock(rt, block, blockSelection);
             break;
 
         case Markdown::BlockType::Blockquote:
             if (block.isQuoteBar) {
                 rt->FillRoundedRectangle(D2D1::RoundedRect(block.bounds, 1.75f, 1.75f), m_brushQuoteBar.Get());
             } else {
-                DrawTextBlock(rt, block);
+                DrawTextBlock(rt, block, blockSelection);
             }
             break;
 
         case Markdown::BlockType::ListItem:
             DrawListMarker(rt, block);
-            DrawTextBlock(rt, block);
+            DrawTextBlock(rt, block, blockSelection);
             break;
 
         case Markdown::BlockType::CodeBlock:
             if (block.diagram) {
                 DrawDiagram(rt, block);
             } else {
-                DrawCodeBlock(rt, block);
+                DrawCodeBlock(rt, block, blockSelection);
             }
             break;
 
@@ -383,7 +406,7 @@ void PreviewRenderer::Draw(ID2D1RenderTarget* rt, const LayoutEngine& layout, fl
             break;
 
         case Markdown::BlockType::Table:
-            DrawTable(rt, block);
+            DrawTable(rt, block, blockSelection);
             break;
 
         default:

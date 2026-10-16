@@ -87,6 +87,15 @@ public:
     // Moves the caret `utf16Units` UTF-16 code units past a UTF-8 byte offset (a character
     // located in the preview).
     void GotoSourcePosition(size_t byteOffset, size_t utf16Units);
+    // Document position `utf16Units` UTF-16 code units past a UTF-8 byte offset, clamped to the document.
+    sptr_t PositionFromSource(size_t byteOffset, size_t utf16Units) const;
+    // Start and end (before the line ending) of a 1-based line, clamped to the document.
+    sptr_t LineStartPosition(int line) const;
+    sptr_t LineEndPosition(int line) const;
+    // Selects [start, end), keeping its start in view.
+    void SelectRange(sptr_t start, sptr_t end);
+    // UTF-8 text of [start, end).
+    std::string GetTextRange(sptr_t start, sptr_t end) const { return GetRange(start, end); }
     int GetFirstVisibleDocLine() const;
     void ScrollToDocLine(int docLine);
     bool FindNext(std::string_view text, bool matchCase, bool wholeWord, bool regex, bool forward = true);
