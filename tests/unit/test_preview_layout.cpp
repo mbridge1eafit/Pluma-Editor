@@ -357,7 +357,7 @@ TEST_F(PreviewLayoutFixture, MermaidDiagramIsPaintedOffscreen) {
 }
 
 // ==============================================================================
-// Preview -> source hit-testing (double-click to edit, task checkboxes)
+// Preview -> source hit-testing (Ctrl+click to edit, task checkboxes)
 // ==============================================================================
 
 namespace {
@@ -498,4 +498,153 @@ TEST_F(SourceHitTest, TaskBoxesAreHitAndToggled) {
     EXPECT_EQ(m_engine.HitTestTaskBox((bullet.markerRect.left + bullet.markerRect.right) * 0.5f,
                                       (bullet.markerRect.top + bullet.markerRect.bottom) * 0.5f),
               nullptr);
+}
+
+// ==============================================================================
+// Text selection (drag, double/triple-click, copy, "Editar aquí", "Copiar como Markdown")
+// ==============================================================================
+
+TEST(PreviewSelectionTest, WordBoundsFollowCharacterClasses) {
+    const std::wstring text = L"Una canción, snake_case...  fin \U0001F600!";
+    const auto at = [&](std::wstring_view part) { return static_cast<UINT32>(text.find(part)); };
+    const auto span = [&](std::wstring_view part) {
+        return std::make_pair(at(part), at(part) + static_cast<UINT32>(part.size()));
+    };
+    EXPECT_EQ(WordBounds(text, at(L"ón")), span(L"canción"));
+    EXPECT_EQ(WordBounds(text, at(L"_case")), span(L"snake_case"));
+    EXPECT_EQ(WordBounds(text, at(L"...") + 1), span(L"..."));
+    EXPECT_EQ(WordBounds(text, at(L"  ")), span(L"  "));
+    EXPECT_EQ(WordBounds(text, at(L"\U0001F600") + 1), span(L"\U0001F600"));
+    // Past the end: the last character.
+    EXPECT_EQ(WordBounds(text, 1000), std::make_pair(static_cast<UINT32>(text.size() - 1), static_cast<UINT32>(text.size())));
+    EXPECT_EQ(WordBounds(L"", 0), std::make_pair(0u, 0u));
+}
+
+namespace {
+
+class TextSelectionTest : public SourceHitTest {
+protected:
+    std::wstring Text(const TextRange& range) const { return m_engine.GetSelectedText(range.start, range.end); }
+
+    size_t BlockIndex(BlockType type) const {
+        const auto& blocks = m_engine.GetBlocks();
+        for (size_t i = 0; i < blocks.size(); ++i) {
+            if (blocks[i].type == type) return i;
+        }
+        ADD_FAILURE() << "block not found";
+        return 0;
+    }
+};
+
+} // namespace
+
+TEST_F(TextSelectionTest, SelectedTextJoinsBlocksRowsAndCells) {
+    Layout("Hola **mundo**  \nfin\n\n- uno\n- dos\n\n| A | B |\n|---|---|\n| x | y |\n\n```\nab\ncd\n```\n");
+    // Paragraph, two list items, four cells and the code block.
+    ASSERT_EQ(m_engine.GetTextUnits().size(), 8u);
+    EXPECT_EQ(m_engine.GetSelectedText(TextPosition{}, m_engine.DocumentEnd()),
+              L"Hola mundo\r\nfin\r\n\r\nuno\r\ndos\r\n\r\nA\tB\r\nx\ty\r\n\r\nab\r\ncd");
+}
+
+TEST_F(TextSelectionTest, DiagramsAndListMarkersAreNotSelectable) {
+    Layout("1. uno\n2. dos\n\n```mermaid\ngraph TD\nA-->B\n```\n\nfin\n");
+    ASSERT_EQ(m_engine.GetTextUnits().size(), 3u);
+    EXPECT_EQ(m_engine.GetSelectedText(TextPosition{}, m_engine.DocumentEnd()), L"uno\r\ndos\r\n\r\nfin");
+}
+
+TEST_F(TextSelectionTest, PartialSelectionSkipsMarkupInBothDirections) {
+    Layout("Hola **mundo** feliz\n");
+    // Visible text "Hola mundo feliz": [6, 13) is "undo fe".
+    const TextPosition a{0, 6};
+    const TextPosition b{0, 13};
+    EXPECT_EQ(m_engine.GetSelectedText(a, b), L"undo fe");
+    EXPECT_EQ(m_engine.GetSelectedText(b, a), L"undo fe");
+
+    SourceSelection sel = m_engine.GetSourceSelection(b, a);
+    EXPECT_FALSE(sel.wholeLines);
+    EXPECT_TRUE(sel.start.exact);
+    EXPECT_EQ(ByteOffset(sel.start), m_md.find("undo"));
+    EXPECT_EQ(ByteOffset(sel.end), m_md.find("feliz") + 2);
+
+    // Exactly the bold word: its source without the asterisks around it.
+    sel = m_engine.GetSourceSelection(TextPosition{0, 5}, TextPosition{0, 10});
+    EXPECT_EQ(ByteOffset(sel.start), m_md.find("mundo"));
+    EXPECT_EQ(ByteOffset(sel.end), m_md.find("mundo") + 5);
+}
+
+TEST_F(TextSelectionTest, SourceSelectionUsesWholeLinesAcrossBlocks) {
+    Layout("# T\n\nuno\ndos\n\n| A |\n|---|\n| x |\n");
+    ASSERT_EQ(m_engine.GetTextUnits().size(), 4u); // Heading, paragraph, two cells
+
+    SourceSelection sel = m_engine.GetSourceSelection(TextPosition{1, 2}, TextPosition{3, 1});
+    EXPECT_TRUE(sel.wholeLines);
+    EXPECT_EQ(sel.startLine, 3);
+    EXPECT_EQ(sel.endLine, 8); // The body row, after the delimiter row
+
+    // A whole unit is copied with its markup too.
+    sel = m_engine.GetSourceSelection(TextPosition{1, 0}, TextPosition{1, 7});
+    EXPECT_TRUE(sel.wholeLines);
+    EXPECT_EQ(sel.startLine, 3);
+    EXPECT_EQ(sel.endLine, 4);
+}
+
+TEST_F(TextSelectionTest, HitTestingFindsCaretsWordsAndUnits) {
+    Layout("Primero\n\nHola mundo feliz\n\n| uno | dos |\n|---|---|\n| tres | cuatro |\n\n```\nabc def\n```\n");
+    const LayoutBlock& p = Block(BlockType::Paragraph, 1);
+    D2D1_POINT_2F pt = PointOf(p.textLayout.Get(), p.textOrigin, 6); // 'u' of "mundo"
+    const TextPosition caret = m_engine.HitTestTextPosition(pt.x, pt.y);
+    EXPECT_EQ(caret.unit, 1u);
+    EXPECT_EQ(caret.offset, 6u);
+    EXPECT_EQ(Text(m_engine.WordAt(pt.x, pt.y)), L"mundo");
+    EXPECT_EQ(Text(m_engine.UnitAt(pt.x, pt.y)), L"Hola mundo feliz");
+    EXPECT_TRUE(m_engine.IsOverText(pt.x, pt.y));
+    EXPECT_FALSE(m_engine.IsOverText(m_engine.GetLayoutWidth() - 1.0f, pt.y));
+
+    const TableCellLayout& cell = Block(BlockType::Table).tableRows[1][1];
+    pt = PointOf(cell.textLayout.Get(), cell.textOrigin, 2);
+    EXPECT_EQ(Text(m_engine.WordAt(pt.x, pt.y)), L"cuatro");
+
+    const LayoutBlock& code = Block(BlockType::CodeBlock);
+    pt = PointOf(code.textLayout.Get(), code.textOrigin, 5);
+    EXPECT_EQ(Text(m_engine.WordAt(pt.x, pt.y)), L"def");
+
+    // Far below the content: the nearest unit, the code block.
+    const TextPosition below = m_engine.HitTestTextPosition(10.0f, m_engine.GetTotalHeight() + 500.0f);
+    EXPECT_EQ(below.unit, m_engine.GetTextUnits().size() - 1);
+}
+
+TEST_F(TextSelectionTest, SelectionRectsCoverOnlyTheVisibleSelection) {
+    Layout("uno dos\n\ntres\n\n| a | b |\n|---|---|\n| largo texto | c |\n");
+    const float height = m_engine.GetTotalHeight();
+    std::vector<SelectionRect> rects;
+    m_engine.GetSelectionRects(TextPosition{}, m_engine.DocumentEnd(), 0.0f, height, rects);
+    ASSERT_GE(rects.size(), 6u); // Two paragraphs and four cells
+
+    // Ordered by block, as the renderer expects, and table rectangles stay inside a cell.
+    const size_t tableIndex = BlockIndex(BlockType::Table);
+    const LayoutBlock& table = m_engine.GetBlocks()[tableIndex];
+    for (size_t i = 0; i < rects.size(); ++i) {
+        if (i > 0) EXPECT_LE(rects[i - 1].block, rects[i].block);
+        EXPECT_GT(rects[i].rect.right, rects[i].rect.left);
+        if (rects[i].block != tableIndex) continue;
+        bool inCell = false;
+        for (const auto& row : table.tableRows) {
+            for (const auto& c : row) {
+                if (rects[i].rect.left >= c.rect.left - 0.01f && rects[i].rect.right <= c.rect.right + 0.01f &&
+                    rects[i].rect.top >= c.rect.top - 0.01f && rects[i].rect.bottom <= c.rect.bottom + 0.01f) {
+                    inCell = true;
+                }
+            }
+        }
+        EXPECT_TRUE(inCell);
+    }
+
+    std::vector<SelectionRect> reversed;
+    m_engine.GetSelectionRects(m_engine.DocumentEnd(), TextPosition{}, 0.0f, height, reversed);
+    EXPECT_EQ(reversed.size(), rects.size());
+
+    m_engine.GetSelectionRects(TextPosition{}, m_engine.DocumentEnd(), height + 10.0f, height + 100.0f, rects);
+    EXPECT_TRUE(rects.empty());
+    m_engine.GetSelectionRects(TextPosition{0, 2}, TextPosition{0, 2}, 0.0f, height, rects);
+    EXPECT_TRUE(rects.empty());
 }

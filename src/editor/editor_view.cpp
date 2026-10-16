@@ -326,7 +326,7 @@ void EditorView::GotoLine(int line) {
     Call(SCI_ENSUREVISIBLE, line - 1);
 }
 
-void EditorView::GotoSourcePosition(size_t byteOffset, size_t utf16Units) {
+sptr_t EditorView::PositionFromSource(size_t byteOffset, size_t utf16Units) const {
     const sptr_t length = Call(SCI_GETLENGTH);
     sptr_t pos = (std::min)(static_cast<sptr_t>(byteOffset), length);
     if (utf16Units > 0) {
@@ -334,8 +334,31 @@ void EditorView::GotoSourcePosition(size_t byteOffset, size_t utf16Units) {
         const sptr_t moved = Call(SCI_POSITIONRELATIVECODEUNITS, pos, static_cast<sptr_t>(utf16Units));
         pos = moved > 0 ? moved : length;
     }
+    return pos;
+}
+
+void EditorView::GotoSourcePosition(size_t byteOffset, size_t utf16Units) {
+    const sptr_t pos = PositionFromSource(byteOffset, utf16Units);
     Call(SCI_ENSUREVISIBLE, Call(SCI_LINEFROMPOSITION, pos));
     Call(SCI_GOTOPOS, pos);
+    Call(SCI_CHOOSECARETX);
+}
+
+sptr_t EditorView::LineStartPosition(int line) const {
+    const sptr_t lastLine = Call(SCI_GETLINECOUNT) - 1;
+    return Call(SCI_POSITIONFROMLINE, (std::clamp)(static_cast<sptr_t>(line) - 1, sptr_t{0}, lastLine));
+}
+
+sptr_t EditorView::LineEndPosition(int line) const {
+    const sptr_t lastLine = Call(SCI_GETLINECOUNT) - 1;
+    return Call(SCI_GETLINEENDPOSITION, (std::clamp)(static_cast<sptr_t>(line) - 1, sptr_t{0}, lastLine));
+}
+
+void EditorView::SelectRange(sptr_t start, sptr_t end) {
+    Call(SCI_ENSUREVISIBLE, Call(SCI_LINEFROMPOSITION, end));
+    Call(SCI_ENSUREVISIBLE, Call(SCI_LINEFROMPOSITION, start));
+    Call(SCI_SETSEL, start, end);
+    Call(SCI_SCROLLRANGE, end, start); // Start visible, and as much of the rest as fits
     Call(SCI_CHOOSECARETX);
 }
 

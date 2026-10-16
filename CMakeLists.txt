@@ -65,6 +65,8 @@ set(PLUMA_SOURCES
     src/app/toolbar.cpp
     src/platform/app_package.h
     src/platform/app_package.cpp
+    src/platform/clipboard.h
+    src/platform/clipboard.cpp
     src/platform/file_association.h
     src/platform/file_association.cpp
     src/platform/dpi.h
