@@ -1423,6 +1423,61 @@ void LayoutEngine::GetSelectionRects(TextPosition a, TextPosition b, float top, 
     }
 }
 
+bool LayoutEngine::FindText(std::wstring_view needle, TextPosition from, bool matchCase, bool wholeWord,
+                            bool forward, TextRange& match) const {
+    if (needle.empty() || m_textUnits.empty()) return false;
+    const auto n = static_cast<UINT32>(needle.size());
+    const BOOL ignoreCase = matchCase ? FALSE : TRUE;
+    auto matchesAt = [&](const std::wstring& text, UINT32 i) {
+        if (i + n > text.size()) return false;
+        if (CompareStringOrdinal(text.data() + i, static_cast<int>(n), needle.data(), static_cast<int>(n),
+                                 ignoreCase) != CSTR_EQUAL) {
+            return false;
+        }
+        if (!wholeWord) return true;
+        const bool startOk = i == 0 || ClassOf(text[i - 1]) != CharClass::Word || ClassOf(text[i]) != CharClass::Word;
+        const bool endOk = i + n >= text.size() || ClassOf(text[i + n]) != CharClass::Word ||
+                           ClassOf(text[i + n - 1]) != CharClass::Word;
+        return startOk && endOk;
+    };
+
+    // Matches stay inside one text unit; the search wraps around the document once.
+    const size_t count = m_textUnits.size();
+    from.unit = (std::min)(from.unit, count - 1);
+    for (size_t step = 0; step <= count; ++step) {
+        const size_t u = forward ? (from.unit + step) % count : (from.unit + count - step % count) % count;
+        const std::wstring& text = *ViewOf(m_textUnits[u]).text;
+        const auto size = static_cast<UINT32>(text.size());
+        if (size < n) continue;
+        if (forward) {
+            UINT32 begin = 0;
+            UINT32 limit = size - n; // Inclusive
+            if (step == 0) begin = from.offset;
+            else if (step == count) limit = from.offset > 0 ? (std::min)(from.offset - 1, limit) : 0;
+            if (step == count && from.offset == 0) continue;
+            for (UINT32 i = begin; i <= limit; ++i) {
+                if (matchesAt(text, i)) {
+                    match = TextRange{{u, i}, {u, i + n}};
+                    return true;
+                }
+            }
+        } else {
+            // A match must end at or before `from` on the first unit, after it on the wrapped one.
+            INT64 high = static_cast<INT64>(size - n);
+            INT64 low = 0;
+            if (step == 0) high = (std::min)(high, static_cast<INT64>(from.offset) - static_cast<INT64>(n));
+            else if (step == count) low = static_cast<INT64>(from.offset) - static_cast<INT64>(n) + 1;
+            for (INT64 i = high; i >= (std::max)(low, INT64{0}); --i) {
+                if (matchesAt(text, static_cast<UINT32>(i))) {
+                    match = TextRange{{u, static_cast<UINT32>(i)}, {u, static_cast<UINT32>(i) + n}};
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 std::wstring LayoutEngine::GetSelectedText(TextPosition a, TextPosition b) const {
     std::wstring out;
     if (m_textUnits.empty()) return out;

@@ -79,6 +79,11 @@ public:
     void SelectAll();
     void CopySelection() const;
     void ClearSelection();
+    // Selects and scrolls to the next match after (or before) the selection. False when none.
+    bool FindNext(std::wstring_view needle, bool matchCase, bool wholeWord, bool forward);
+
+    // Invoked when the preview gains keyboard focus.
+    void SetOnFocusCallback(std::function<void()> callback) { m_onFocus = std::move(callback); }
 
     // Invoked when a task checkbox is clicked, with the version of the displayed tree. Returns true
     // when the document was changed, so the checkbox can be redrawn before the re-parse arrives.
@@ -177,6 +182,7 @@ private:
     std::function<void(const SourceSelection&)> m_onSourceSelect;
     std::function<bool(uint64_t, const SourceSelection&)> m_onCopyMarkdown;
     std::function<bool(uint64_t, int, bool)> m_onToggleTask;
+    std::function<void()> m_onFocus;
 };
 
 } // namespace Pluma::Preview

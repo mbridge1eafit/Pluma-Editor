@@ -3,6 +3,7 @@
 #include <uxtheme.h>
 #include <windowsx.h>
 #include <algorithm>
+#include <limits>
 #include <array>
 #include <cmath>
 #include <cctype>
@@ -189,6 +190,10 @@ LRESULT PreviewView::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         ScrollTo(m_scrollPos - amount);
         return 0;
     }
+
+    case WM_SETFOCUS:
+        if (m_onFocus) m_onFocus();
+        return 0;
 
     case WM_KEYDOWN: {
         if (GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0) { // Not AltGr
@@ -677,6 +682,26 @@ void PreviewView::SelectAll() {
     if (!m_layout.HasText()) return;
     m_anchorRange = TextRange{};
     SetSelection(TextPosition{}, m_layout.DocumentEnd());
+}
+
+bool PreviewView::FindNext(std::wstring_view needle, bool matchCase, bool wholeWord, bool forward) {
+    const TextPosition from = forward ? (std::max)(m_selAnchor, m_selFocus) : (std::min)(m_selAnchor, m_selFocus);
+    TextRange match;
+    if (!m_layout.FindText(needle, from, matchCase, wholeWord, forward, match)) return false;
+    m_anchorRange = TextRange{};
+    SetSelection(match.start, match.end);
+
+    // Bring the match into view, roughly centered when it is off screen.
+    std::vector<SelectionRect> rects;
+    m_layout.GetSelectionRects(match.start, match.end, 0.0f, (std::numeric_limits<float>::max)(), rects);
+    if (!rects.empty()) {
+        const float top = rects.front().rect.top;
+        const float bottom = rects.back().rect.bottom;
+        if (top < m_scrollPos || bottom > m_scrollPos + m_viewHeight) {
+            ScrollTo(top - m_viewHeight / 3.0f);
+        }
+    }
+    return true;
 }
 
 void PreviewView::ClearSelection() {

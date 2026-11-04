@@ -243,6 +243,10 @@ public:
     // Plain text of [a, b): tabs between the cells of a row, CRLF between rows and list items, a
     // blank line between other blocks.
     std::wstring GetSelectedText(TextPosition a, TextPosition b) const;
+    // Next occurrence of `needle` inside a text unit, starting at `from` (forward) or ending at it
+    // (backward), wrapping around the document. Matches never span text units.
+    bool FindText(std::wstring_view needle, TextPosition from, bool matchCase, bool wholeWord, bool forward,
+                  TextRange& match) const;
     SourceSelection GetSourceSelection(TextPosition a, TextPosition b) const;
 
     // Updates a task checkbox ahead of the re-parse that confirms it (instant feedback).

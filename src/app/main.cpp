@@ -1175,6 +1175,7 @@ public:
     }
 
     void ShowReplaceDialog() {
+        m_editor.SetFocus(); // Replacing only applies to the source
         if (m_hFindReplaceDlg) {
             SetFocus(m_hFindReplaceDlg);
             return;
@@ -1206,6 +1207,15 @@ public:
         bool matchCase = (pfr->Flags & FR_MATCHCASE) != 0;
         bool wholeWord = (pfr->Flags & FR_WHOLEWORD) != 0;
         bool forward = (pfr->Flags & FR_DOWN) != 0;
+
+        // The preview is read-only: it only takes part in "find next".
+        if ((pfr->Flags & FR_FINDNEXT) && m_findInPreview && IsWindowVisible(m_preview.GetHwnd())) {
+            if (!m_preview.FindNext(pfr->lpstrFindWhat, matchCase, wholeWord, forward)) {
+                MessageBoxW(m_hwnd, L"No se encontraron coincidencias en la vista previa.", L"Buscar",
+                            MB_OK | MB_ICONINFORMATION);
+            }
+            return;
+        }
 
         if (pfr->Flags & FR_FINDNEXT) {
             bool found = m_editor.FindNext(findStr, matchCase, wholeWord, false, forward);
@@ -1321,6 +1331,7 @@ private:
             m_preview.SetOnCopyMarkdownCallback([this](uint64_t treeVersion, const Pluma::Preview::SourceSelection& sel) {
                 return CopySourceMarkdown(treeVersion, sel);
             });
+            m_preview.SetOnFocusCallback([this] { m_findInPreview = true; });
             m_preview.SetOnToggleTaskCallback([this](uint64_t treeVersion, int markOffset, bool checked) {
                 // Source offsets are only valid for the text the displayed tree was parsed from.
                 if (markOffset < 0 || treeVersion != m_docVersion || m_reparsePosted) {
@@ -1579,6 +1590,11 @@ private:
         }
 
         case WM_COMMAND: {
+            if (lParam != 0 && reinterpret_cast<HWND>(lParam) == m_editor.GetHwnd() &&
+                HIWORD(wParam) == SCEN_SETFOCUS) {
+                m_findInPreview = false; // Find/replace now targets the editor
+                return 0;
+            }
             int wmId = LOWORD(wParam);
             switch (wmId) {
             case IDM_FILE_NEW:
@@ -2352,6 +2368,7 @@ private:
     HWND m_hwndStatusBar = nullptr;
     HWND m_hFindReplaceDlg = nullptr;
     FINDREPLACEW m_fr{};
+    bool m_findInPreview = false; // Last focused pane (editor or preview) is the one searched
     wchar_t m_szFindWhat[256] = L"";
     wchar_t m_szReplaceWith[256] = L"";
 };

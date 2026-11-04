@@ -648,3 +648,25 @@ TEST_F(TextSelectionTest, SelectionRectsCoverOnlyTheVisibleSelection) {
     m_engine.GetSelectionRects(TextPosition{0, 2}, TextPosition{0, 2}, 0.0f, height, rects);
     EXPECT_TRUE(rects.empty());
 }
+
+TEST_F(TextSelectionTest, FindTextWrapsAndHonorsOptions) {
+    Layout("Hola mundo\n\nMundo y mundial\n");
+    TextRange m;
+    ASSERT_TRUE(m_engine.FindText(L"mundo", TextPosition{}, false, false, true, m));
+    EXPECT_EQ(m.start.unit, 0u);
+    EXPECT_EQ(m.start.offset, 5u);
+    ASSERT_TRUE(m_engine.FindText(L"mundo", m.end, false, false, true, m));
+    EXPECT_EQ(m.start.unit, 1u);
+    EXPECT_EQ(m.start.offset, 0u);
+    // Wraps back to the first match.
+    ASSERT_TRUE(m_engine.FindText(L"mundo", m.end, false, false, true, m));
+    EXPECT_EQ(m.start.unit, 0u);
+    // Case and whole word.
+    ASSERT_TRUE(m_engine.FindText(L"Mundo", TextPosition{0, 6}, true, false, true, m));
+    EXPECT_EQ(m.start.unit, 1u);
+    EXPECT_FALSE(m_engine.FindText(L"mund", TextPosition{}, false, true, true, m));
+    // Backward from the start wraps to the last match.
+    ASSERT_TRUE(m_engine.FindText(L"mund", TextPosition{}, false, false, false, m));
+    EXPECT_EQ(m.start.unit, 1u);
+    EXPECT_EQ(m.start.offset, 8u);
+}
