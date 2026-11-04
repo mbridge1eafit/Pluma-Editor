@@ -44,6 +44,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushText;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushMuted;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushError;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushHeading;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushLink;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brushCodeText;

@@ -1240,9 +1240,29 @@ Scene BuildFlowScene(const FlowGraph& g, const MeasureText& measure) {
         const float startLen = MarkerLength(e.startArrow, arrowSize);
         pts.front() = Point{startTip.x - startDir.x * startLen, startTip.y - startDir.y * startLen};
 
-        // Smooth curve: every piece leaves and enters along the rank axis.
         std::vector<Segment> segments;
-        for (size_t k = 1; k < pts.size(); ++k) {
+        if (pts.size() >= 3) {
+            // Edges with bend points: uniform cubic B-spline over the polyline (as d3.curveBasis, which
+            // Mermaid uses). It smooths small jogs between ranks instead of turning each into an S.
+            auto lerp = [](Point p, Point q, float wp, float wq) {
+                return Point{(p.x * wp + q.x * wq), (p.y * wp + q.y * wq)};
+            };
+            auto line = [&](Point a, Point c) { segments.push_back(Segment{a, c, c}); };
+            Point cursor = pts[0];
+            const Point first = lerp(pts[0], pts[1], 5.0f / 6.0f, 1.0f / 6.0f);
+            line(cursor, first);
+            for (size_t k = 2; k <= pts.size(); ++k) {
+                const Point p0 = pts[k - 2];
+                const Point p1 = pts[k - 1];
+                const Point p2 = k < pts.size() ? pts[k] : pts[k - 1]; // Last piece ends on the endpoint
+                const Point end{(p0.x + 4.0f * p1.x + p2.x) / 6.0f, (p0.y + 4.0f * p1.y + p2.y) / 6.0f};
+                segments.push_back(Segment{lerp(p0, p1, 2.0f / 3.0f, 1.0f / 3.0f), lerp(p0, p1, 1.0f / 3.0f, 2.0f / 3.0f), end});
+                cursor = end;
+            }
+            line(cursor, pts.back());
+        }
+        // Direct edges: one smooth piece that leaves and enters along the rank axis.
+        for (size_t k = 1; pts.size() == 2 && k < pts.size(); ++k) {
             const Point a = pts[k - 1];
             const Point c2 = pts[k];
             if (horizontal) {

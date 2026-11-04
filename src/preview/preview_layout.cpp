@@ -233,6 +233,7 @@ PreviewThemeColors PreviewThemeColors::Light() {
     c.background = Hex(0xFFFFFF);
     c.text = Hex(0x1F2328);
     c.mutedText = Hex(0x59636E);
+    c.errorText = Hex(0xD1242F);
     c.headingText = Hex(0x1F2328);
     c.linkText = Hex(0x0969DA);
     c.codeText = Hex(0x1F2328);
@@ -258,6 +259,7 @@ PreviewThemeColors PreviewThemeColors::Dark() {
     c.background = Hex(0x1E1E1E); // Matches the editor background
     c.text = Hex(0xD4D4D4);
     c.mutedText = Hex(0x9198A1);
+    c.errorText = Hex(0xF85149);
     c.headingText = Hex(0xF0F6FC);
     c.linkText = Hex(0x4493F8);
     c.codeText = Hex(0xE6EDF3);
@@ -792,15 +794,24 @@ void LayoutEngine::LayoutCodeBlock(const Markdown::Block& block, const Context& 
     float textTop = currentY + kCodePaddingY;
     if (!lb.info.empty()) {
         std::string label = lb.info;
-        if (!diagramError.empty()) {
-            label += " \u2014 " + diagramError;
+        // A failed diagram is called out (in the error colour, wrapped so the reason is never clipped).
+        lb.labelIsError = !diagramError.empty();
+        if (lb.labelIsError) {
+            label += " \u2014 \u26a0 No se pudo renderizar el diagrama: " + diagramError;
         }
         lb.labelLayout = CreatePlainLayout(Utf8ToUtf16(label), m_styleLabel, ctx.width - 2.0f * kCodePaddingX);
+        float labelHeight = m_styleLabel.lineHeight;
         if (lb.labelLayout) {
-            lb.labelLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            if (lb.labelIsError) {
+                DWRITE_TEXT_METRICS tm{};
+                lb.labelLayout->GetMetrics(&tm);
+                labelHeight = (std::max)(labelHeight, tm.height);
+            } else {
+                lb.labelLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            }
         }
         lb.labelOrigin = D2D1::Point2F(ctx.x + kCodePaddingX, currentY + 7.0f);
-        textTop = currentY + 7.0f + m_styleLabel.lineHeight + 4.0f;
+        textTop = currentY + 7.0f + labelHeight + 4.0f;
     }
 
     const float textWidth = (std::max)(kMinTextWidth, ctx.width - 2.0f * kCodePaddingX);

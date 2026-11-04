@@ -342,3 +342,173 @@ TEST(MermaidTest, LargeInputIsRejectedGracefully) {
     EXPECT_FALSE(result.scene);
     EXPECT_FALSE(result.error.empty());
 }
+
+// Regression: four subgraphs whose members interleave across ranks, with many back edges. The old
+// cluster separation produced a ~577 000 px wide scene (invisible in the preview). The scene must stay
+// bounded for any text measurement (the preview measures with DirectWrite).
+TEST(MermaidTest, LargeFlowchartWithInterleavedSubgraphsStaysCompact) {
+    const char* source = R"MMD(
+flowchart TD
+  INICIO([El conductor abre Electrolineras])
+
+  subgraph E1["1 · Descubrir e identificar el cargador"]
+    direction TB
+    P101["1.01 Mapa cargando"]
+    D_MAPA{"¿Cargó el mapa?"}
+    P102["1.02 Mapa de estaciones"]
+    D_ACCION{"¿Qué hace?"}
+    P104["1.04 Panel de filtros"]
+    D_FILTRO{"¿Hay estaciones<br/>con ese filtro?"}
+    P103["1.03 Mapa filtrado<br/>Paga con FlyPass"]
+    D_UBIC{"¿Dio permiso<br/>de ubicación?"}
+    P105["1.05 Mi ubicación"]
+    D_ACUERDO{"¿La estación tiene<br/>acuerdo con FlyPass?"}
+    P109["1.09 Estación sin acuerdo<br/>solo referencia y Cómo llegar"]
+    D_CONECTOR{"¿El conector está<br/>identificado?"}
+    D_PUNTO{"¿Hay un punto libre<br/>o con su vehículo enchufado?"}
+    P106["1.06 Detalle de estación<br/>1.07 detalle expandido"]
+    P108["1.08 Detalle con el vehículo<br/>ya enchufado"]
+  end
+
+  subgraph E2["2 · Verificar la cuenta e iniciar la carga"]
+    direction TB
+    P201["2.01 Consultando tu cuenta"]
+    D_CUENTA{"¿Cómo está la cuenta?"}
+    P202["2.02 / 2.03 Configurar e iniciar<br/>elige vehículo si tiene varios"]
+    P204["2.04 Límite de carga<br/>80 % · 100 % · Otro"]
+    P205["2.05 Tarifa no publicada<br/>se avisa antes de iniciar"]
+    P206["2.06 Iniciar carga<br/>botón Iniciando…"]
+    D_PREAUT{"¿FlyPass autoriza<br/>el cobro?"}
+    P207["2.07 Autorizado<br/>pidiendo el arranque"]
+  end
+
+  subgraph E3["3 · Cargar, seguir en vivo y cerrar"]
+    direction TB
+    P301["3.01 Pidiendo el arranque<br/>al operador"]
+    D_OPERADOR{"¿El operador<br/>acepta?"}
+    D_CABLE{"¿El vehículo<br/>ya está enchufado?"}
+    P302["3.02 Conecta el cable<br/>anillo con el tiempo restante"]
+    D_ATIEMPO{"¿Conectó a tiempo?"}
+    P303["3.03 – 3.05 Cargando en vivo<br/>energía, tiempo, batería o límite"]
+    D_FIN{"¿Cómo termina?"}
+    P306["3.06 Deteniendo la carga"]
+    P307["3.07 Carga detenida<br/>desconecta el cable"]
+    P308["3.08 Carga terminada<br/>cobrando"]
+    D_COBRO{"¿Se pudo cobrar?"}
+    P309["3.09 Pagado<br/>aún con el cable puesto"]
+    P310(["3.10 Comprobante de carga"])
+  end
+
+  subgraph E4["4 · Cuando algo falla"]
+    direction TB
+    F413["4.13 No se pudo cargar el mapa"]
+    F412["4.12 Sin estaciones para mostrar"]
+    F414["4.14 Ubicación no disponible"]
+    F415["4.15 Conector no identificado"]
+    F411["4.11 Estación sin punto libre"]
+    F406["4.06 No pudimos consultar<br/>tus vehículos"]
+    F407["4.07 Cuenta sin vehículos"]
+    F408["4.08 Vehículos sin placa"]
+    F405["4.05 Cuenta rechazada al iniciar"]
+    F401["4.01 No se pudo iniciar<br/>el operador rechazó"]
+    F402["4.02 La carga no arrancó<br/>no se conectó a tiempo"]
+    F403["4.03 La carga falló"]
+    F404["4.04 Carga interrumpida"]
+    F409["4.09 Cobro fallido<br/>Reintentar pago"]
+    F410["4.10 Cobro incobrable<br/>el saldo queda en cartera"]
+  end
+
+  %% Etapa 1
+  INICIO --> P101 --> D_MAPA
+  D_MAPA -- Sí --> P102
+  D_MAPA -- No --> F413
+  F413 -. Reintentar .-> P101
+
+  P102 --> D_ACCION
+  D_ACCION -- Filtra --> P104 --> D_FILTRO
+  D_FILTRO -- Sí --> P103 --> D_ACCION
+  D_FILTRO -- No --> F412
+  F412 -. Quitar filtros .-> P102
+  D_ACCION -- Mi ubicación --> D_UBIC
+  D_UBIC -- Sí --> P105 --> D_ACCION
+  D_UBIC -- No --> F414
+  F414 -. Sigue en el mapa .-> P102
+  D_ACCION -- Toca una estación --> D_ACUERDO
+
+  D_ACUERDO -- No --> P109
+  P109 -. Volver al mapa .-> P102
+  D_ACUERDO -- Sí --> D_CONECTOR
+  D_CONECTOR -- No --> F415
+  F415 -. Elegir otra estación .-> P102
+  D_CONECTOR -- Sí --> D_PUNTO
+  D_PUNTO -- Ninguno --> F411
+  F411 -. Elegir otra estación .-> P102
+  D_PUNTO -- Libre --> P106
+  D_PUNTO -- Su vehículo enchufado --> P108
+
+  %% Etapa 2
+  P106 -- Cargar con FlyPass --> P201
+  P108 -- Cargar con FlyPass --> P201
+  P201 --> D_CUENTA
+  D_CUENTA -- Lista --> P202
+  D_CUENTA -- No respondió --> F406
+  D_CUENTA -- Sin vehículos --> F407
+  D_CUENTA -- Sin placa --> F408
+  F406 -. Reintentar .-> P201
+
+  P202 -. Opcional .-> P204 --> P206
+  P202 -. Sin tarifa publicada .-> P205 --> P206
+  P202 -- Iniciar carga --> P206
+  P206 --> D_PREAUT
+  D_PREAUT -- Sí --> P207
+  D_PREAUT -- No --> F405
+
+  %% Etapa 3
+  P207 --> P301 --> D_OPERADOR
+  D_OPERADOR -- No --> F401
+  F401 -. Elegir otro punto .-> P102
+  D_OPERADOR -- Sí --> D_CABLE
+  D_CABLE -- Sí --> P303
+  D_CABLE -- No --> P302 --> D_ATIEMPO
+  D_ATIEMPO -- Sí --> P303
+  D_ATIEMPO -- No --> F402
+  F402 -. No se le cobra .-> P102
+
+  P303 --> D_FIN
+  D_FIN -- Detener carga --> P306 --> P307
+  D_FIN -- Llegó al límite<br/>o desconectó --> P308
+  D_FIN -- Error del cargador --> F403
+  D_FIN -- Se cortó --> F404
+  P307 -- Desconecta --> P308
+  F403 -. Elegir otro punto .-> P102
+  F404 -. Se cobra lo cargado .-> P308
+
+  P308 --> D_COBRO
+  D_COBRO -- Sí, con el cable puesto --> P309
+  D_COBRO -- Sí --> P310
+  D_COBRO -- No --> F409
+  P309 -- Desconecta --> P310
+  F409 -. Reintentar pago .-> P308
+  F409 -. Sin éxito .-> F410
+
+  classDef feliz fill:#eef5c4,stroke:#8a9800,color:#1d1f23
+  classDef decision fill:#ffffff,stroke:#6b7280,color:#1d1f23
+  classDef falla fill:#fde8e8,stroke:#c0392b,color:#1d1f23
+  classDef borde fill:#ffffff,stroke:#1d1f23,color:#1d1f23
+
+  class P101,P102,P103,P104,P105,P106,P108,P201,P202,P204,P205,P206,P207,P301,P302,P303,P306,P307,P308,P309,P310 feliz
+  class D_MAPA,D_ACCION,D_FILTRO,D_UBIC,D_ACUERDO,D_CONECTOR,D_PUNTO,D_CUENTA,D_PREAUT,D_OPERADOR,D_CABLE,D_ATIEMPO,D_FIN,D_COBRO decision
+  class F401,F402,F403,F404,F405,F406,F407,F408,F409,F410,F411,F412,F413,F414,F415 falla
+  class INICIO,P109 borde
+)MMD";
+    for (float factor : {1.0f, 1.07f, 1.15f, 1.3f}) {
+        const auto r = RenderMermaid(source, [factor](std::string_view text, float size, bool bold) {
+            return EstimateTextWidth(text, size, bold) * factor;
+        });
+        ASSERT_TRUE(r.scene) << r.error;
+        EXPECT_TRUE(AllFinite(*r.scene)) << factor;
+        EXPECT_TRUE(InsideBounds(*r.scene)) << factor;
+        EXPECT_LT(r.scene->width, 6000.0f) << factor;
+        EXPECT_LT(r.scene->height, 6000.0f) << factor;
+    }
+}

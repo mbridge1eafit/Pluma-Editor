@@ -1,7 +1,9 @@
 #include "mermaid.h"
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
+#include <string>
 
 #include "mermaid_internal.h"
 
@@ -13,6 +15,7 @@ namespace {
 constexpr size_t kMaxSourceBytes = 64 * 1024;
 constexpr size_t kMaxNodes = 400;
 constexpr size_t kMaxEdges = 800;
+constexpr float kMaxSceneExtent = 20000.0f; // DIPs
 
 // Strips a leading YAML front matter block (---\n...\n---) and returns its `title:`.
 std::string_view StripFrontMatter(std::string_view source, std::string& title) {
@@ -91,6 +94,17 @@ MermaidResult RenderMermaid(std::string_view source, const MeasureText& measure)
 
         if (scene->items.empty() || scene->width <= 0.0f || scene->height <= 0.0f) {
             result.error = "El diagrama está vacío";
+            return result;
+        }
+        if (!std::isfinite(scene->width) || !std::isfinite(scene->height)) {
+            result.error = "Error interno al calcular la distribución del diagrama";
+            return result;
+        }
+        // A runaway layout would otherwise be scaled down to an invisible sliver in the preview.
+        if (scene->width > kMaxSceneExtent || scene->height > kMaxSceneExtent) {
+            result.error = "La distribución calculada es demasiado grande (" +
+                           std::to_string(static_cast<long long>(scene->width)) + " × " +
+                           std::to_string(static_cast<long long>(scene->height)) + " px)";
             return result;
         }
         result.scene = std::move(scene);

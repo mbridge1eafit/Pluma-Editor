@@ -30,6 +30,7 @@ struct PreviewThemeColors {
     D2D1_COLOR_F background;
     D2D1_COLOR_F text;
     D2D1_COLOR_F mutedText;
+    D2D1_COLOR_F errorText;   // Diagnostics, e.g. a Mermaid block that could not be rendered
     D2D1_COLOR_F headingText;
     D2D1_COLOR_F linkText;
     D2D1_COLOR_F codeText;
@@ -176,6 +177,7 @@ struct LayoutBlock {
     ComPtr<IDWriteTextLayout> markerLayout; // "1." for ordered items
     D2D1_POINT_2F markerOrigin{};
     ComPtr<IDWriteTextLayout> labelLayout;  // Language label of code blocks
+    bool labelIsError = false;  // The label reports why a Mermaid diagram could not be rendered
     D2D1_POINT_2F labelOrigin{};
     std::string info;           // CodeBlock language
     std::string codeText;       // Verbatim code content

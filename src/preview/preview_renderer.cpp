@@ -31,6 +31,7 @@ bool PreviewRenderer::CreateResources(ID2D1RenderTarget* rt, const PreviewThemeC
     const BrushSpec specs[] = {
         {colors.text, m_brushText},
         {colors.mutedText, m_brushMuted},
+        {colors.errorText, m_brushError},
         {colors.headingText, m_brushHeading},
         {colors.linkText, m_brushLink},
         {colors.codeText, m_brushCodeText},
@@ -74,6 +75,7 @@ bool PreviewRenderer::CreateResources(ID2D1RenderTarget* rt, const PreviewThemeC
 void PreviewRenderer::DiscardResources() {
     m_brushText.Reset();
     m_brushMuted.Reset();
+    m_brushError.Reset();
     m_brushHeading.Reset();
     m_brushLink.Reset();
     m_brushCodeText.Reset();
@@ -197,7 +199,8 @@ void PreviewRenderer::DrawCodeBlock(ID2D1RenderTarget* rt, const LayoutBlock& bl
     // Code never paints outside its box, even for pathological lines.
     rt->PushAxisAlignedClip(b, D2D1_ANTIALIAS_MODE_ALIASED);
     if (block.labelLayout) {
-        rt->DrawTextLayout(block.labelOrigin, block.labelLayout.Get(), m_brushMuted.Get(), kTextOptions);
+        rt->DrawTextLayout(block.labelOrigin, block.labelLayout.Get(),
+                           block.labelIsError ? m_brushError.Get() : m_brushMuted.Get(), kTextOptions);
     }
     DrawSelection(rt, selection);
     if (block.textLayout) {
